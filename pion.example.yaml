@@ -1,0 +1,67 @@
+# Pion Configuration Example
+# Copy to pion.yaml and customize
+
+# Provider credentials
+telegram:
+  botToken: "your-bot-token-here"
+
+whatsapp:
+  sessionDir: "~/.pion/whatsapp-session"
+
+# Agent definitions
+agents:
+  main:
+    model: anthropic/claude-sonnet-4-20250514
+    systemPrompt: |
+      You are a helpful assistant with full access to tools and capabilities.
+      Be concise but thorough.
+    skills:
+      - web-browse
+      - supervise
+
+  casual:
+    model: anthropic/claude-sonnet-4-20250514
+    systemPrompt: |
+      You're chatting in a friend group. Be casual, witty, and fun.
+      Don't be overly helpful - be entertaining.
+      Keep responses short unless asked for detail.
+    skills: []
+
+  family:
+    model: anthropic/claude-sonnet-4-20250514
+    systemPrompt: |
+      You help with everyday questions. Be patient and clear.
+      Explain things simply. Use the user's language.
+    skills: []
+
+# Routing rules (first match wins)
+routes:
+  # VIP contact gets main agent
+  - match:
+      contact: "+1234567890"
+    agent: main
+    isolation: per-contact
+
+  # Specific group gets casual agent
+  - match:
+      group: "Friends"
+    agent: casual
+    isolation: per-chat
+
+  # Family members
+  - match:
+      contact: "+0987654321"
+    agent: family
+    isolation: per-contact
+
+  # All other DMs get main agent
+  - match:
+      type: dm
+    agent: main
+    isolation: per-contact
+
+  # Ignore all other groups
+  - match:
+      type: group
+    agent: null
+    isolation: per-chat

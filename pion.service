@@ -1,0 +1,26 @@
+# Pion systemd user service
+# Install: cp pion.service ~/.config/systemd/user/
+# Enable:  systemctl --user enable pion
+# Start:   systemctl --user start pion
+# Logs:    journalctl --user -u pion -f
+
+[Unit]
+Description=Pion Messaging Bridge
+After=network.target
+
+[Service]
+Type=simple
+# Update these paths to match your setup
+WorkingDirectory=%h/Projects/pion
+ExecStart=%h/.bun/bin/bun run src/daemon.ts
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
