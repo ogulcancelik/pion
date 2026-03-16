@@ -365,15 +365,16 @@ export class Runner {
 
 	/**
 	 * Abort an active session immediately.
+	 * Clears queued messages and waits for the agent loop to stop.
 	 * Returns true if abort was triggered, false if nothing was running.
 	 */
-	abort(contextKey: string): boolean {
+	async abort(contextKey: string): Promise<boolean> {
 		const session = this.sessions.get(contextKey);
 		if (!session || !session.isStreaming) {
 			return false;
 		}
 
-		session.abort();
+		await session.abort();
 		return true;
 	}
 }
@@ -442,12 +443,16 @@ class RunnerSession {
 
 	/**
 	 * Abort the current processing immediately.
+	 * Clears all queued messages and waits for the agent loop to stop.
 	 */
-	abort(): void {
+	async abort(): Promise<void> {
 		if (!this.agentSession) {
 			return;
 		}
-		this.agentSession.agent.abort();
+		// Clear steering + followUp queues so they don't fire after abort
+		this.agentSession.agent.clearAllQueues();
+		// Abort + wait for the agent loop to actually terminate
+		await this.agentSession.abort();
 	}
 
 	async prompt(

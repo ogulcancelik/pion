@@ -36,6 +36,8 @@ class Daemon {
 	private providers: Provider[] = [];
 	private telegramProvider: TelegramProvider | null = null;
 	private shuttingDown = false;
+	/** Tracks aborted contexts to suppress onMessage callbacks after /stop */
+	private abortedContexts: Set<string> = new Set();
 
 	constructor(config: Config) {
 		this.config = config;
@@ -182,6 +184,9 @@ class Daemon {
 			const pendingSends: Promise<void>[] = [];
 			let messagesSent = 0;
 
+			// Clear abort flag for this context (fresh run)
+			this.abortedContexts.delete(route.contextKey);
+
 			// Process with agent — onMessage fires for each complete text block
 			// (text before tool calls, between tool calls, and final text)
 			const result = await this.runner.process(
@@ -192,6 +197,9 @@ class Daemon {
 					customTools,
 				},
 				(text) => {
+					// Suppress messages after /stop
+					if (this.abortedContexts.has(route.contextKey)) return;
+
 					const msgNum = messagesSent + 1;
 					console.log(`   📤 Message ${msgNum}: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`);
 					const sendPromise = provider
@@ -263,7 +271,9 @@ class Daemon {
 				}
 
 				case "stop": {
-					const aborted = this.runner.abort(contextKey);
+					// Set abort flag immediately to suppress onMessage callbacks
+					this.abortedContexts.add(contextKey);
+					const aborted = await this.runner.abort(contextKey);
 					if (aborted) {
 						await provider.send({
 							chatId,
@@ -271,6 +281,7 @@ class Daemon {
 						});
 						console.log("   ✓ Aborted");
 					} else {
+						this.abortedContexts.delete(contextKey);
 						await provider.send({
 							chatId,
 							text: "Nothing running.",

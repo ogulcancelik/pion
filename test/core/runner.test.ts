@@ -246,8 +246,8 @@ describe("Runner", () => {
 	});
 
 	describe("abort", () => {
-		test("returns false for unknown context key", () => {
-			expect(runner.abort("unknown:key")).toBe(false);
+		test("returns false for unknown context key", async () => {
+			expect(await runner.abort("unknown:key")).toBe(false);
 		});
 	});
 });
