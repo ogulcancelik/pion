@@ -44,7 +44,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			await this.messageHandler(message);
+			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
 		});
 
 		// Handle photos
@@ -79,7 +79,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			await this.messageHandler(message);
+			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
 		});
 
 		// Handle documents
@@ -113,7 +113,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			await this.messageHandler(message);
+			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
 		});
 
 		// Handle stickers
@@ -143,7 +143,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			await this.messageHandler(message);
+			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
 		});
 
 		// Handle voice messages
@@ -210,7 +210,7 @@ export class TelegramProvider implements Provider {
 					raw: msg,
 				};
 
-				await this.messageHandler(message);
+				void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
 			} catch (err) {
 				console.error("[telegram] Voice transcription failed:", err instanceof Error ? err.message : err);
 				
@@ -227,7 +227,7 @@ export class TelegramProvider implements Provider {
 					raw: msg,
 				};
 
-				await this.messageHandler(message);
+				void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
 			}
 		});
 

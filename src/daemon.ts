@@ -38,6 +38,8 @@ class Daemon {
 	private shuttingDown = false;
 	/** Tracks aborted contexts to suppress onMessage callbacks after /stop */
 	private abortedContexts: Set<string> = new Set();
+	/** Tracks contexts currently processing (set before isStreaming becomes true) */
+	private processingContexts: Set<string> = new Set();
 
 	constructor(config: Config) {
 		this.config = config;
@@ -145,7 +147,8 @@ class Daemon {
 		}
 
 		// Check if session is already processing - if so, steer instead
-		if (this.runner.isStreaming(route.contextKey)) {
+		// Check both isStreaming (agent loop running) and processingContexts (setup phase)
+		if (this.runner.isStreaming(route.contextKey) || this.processingContexts.has(route.contextKey)) {
 			console.log("   → Steering (session busy)");
 			try {
 				await this.runner.steer(route.contextKey, message.text);
@@ -157,6 +160,9 @@ class Daemon {
 		}
 
 		console.log(`   → ${route.agentName} (${route.isolation})`);
+
+		// Mark context as busy immediately (before async init sets isStreaming)
+		this.processingContexts.add(route.contextKey);
 
 		try {
 			if (provider.sendTyping) {
@@ -229,7 +235,9 @@ class Daemon {
 				});
 			}
 
-			if (messagesSent > 0) {
+			if (this.abortedContexts.has(route.contextKey)) {
+				console.log("   ⏹️ Suppressed (aborted)");
+			} else if (messagesSent > 0) {
 				console.log(`   ✓ Sent ${messagesSent} message(s)`);
 			} else if (result.response) {
 				// Fallback: if no messages were sent via callback, send full response
@@ -249,6 +257,8 @@ class Daemon {
 				text: "Sorry, I encountered an error. Please try again.",
 				replyTo: message.id,
 			});
+		} finally {
+			this.processingContexts.delete(route.contextKey);
 		}
 	}
 
