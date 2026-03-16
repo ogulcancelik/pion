@@ -12,11 +12,12 @@ After=network.target
 Type=simple
 # Update these paths to match your setup
 WorkingDirectory=%h/Projects/pion
-ExecStart=%h/.bun/bin/bun run src/daemon.ts
+ExecStart=/usr/bin/bun run src/daemon.ts
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
+Environment=PATH=%h/.local/share/fnm/node-versions/v22.18.0/installation/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 
 # Logging
 StandardOutput=journal
