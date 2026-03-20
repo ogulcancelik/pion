@@ -3,10 +3,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { completeSimple } from "@mariozechner/pi-ai";
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
-import { homeDir } from "./paths.js";
+import { getAuthPath } from "./auth.js";
 
 // Hardcoded summarizer model
 const SUMMARIZER_MODEL = "anthropic/claude-haiku-4-5";
@@ -193,8 +192,8 @@ export class Compactor {
 	private modelRegistry: ModelRegistry;
 
 	constructor(config: CompactorConfig = {}) {
-		const authPath = config.authPath ?? join(homeDir(), ".pion/auth.json");
-		this.authStorage = new AuthStorage(authPath);
+		const authPath = getAuthPath(config);
+		this.authStorage = AuthStorage.create(authPath);
 		this.modelRegistry = new ModelRegistry(this.authStorage);
 	}
 

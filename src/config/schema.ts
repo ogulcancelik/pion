@@ -7,6 +7,8 @@ export interface Config {
 	dataDir?: string;
 	/** Directory containing skills (default: ~/.pion/skills) */
 	skillsDir?: string;
+	/** Auth storage path (default: ~/.pion/auth.json, same schema as pi auth.json) */
+	authPath?: string;
 	telegram?: TelegramConfig;
 	whatsapp?: WhatsAppConfig;
 	agents: Record<string, AgentConfig>;

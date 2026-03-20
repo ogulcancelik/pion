@@ -8,6 +8,11 @@ telegram:
 whatsapp:
   sessionDir: "~/.pion/whatsapp-session"
 
+# Optional: override auth storage path.
+# Default is ~/.pion/auth.json.
+# File format is compatible with pi auth.json.
+# authPath: "~/.pion/auth.json"
+
 # Agent definitions
 agents:
   main:

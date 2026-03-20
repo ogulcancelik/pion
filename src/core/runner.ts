@@ -12,6 +12,7 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { ResourceLoader } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
+import { getAuthPath } from "./auth.js";
 import { expandTilde, homeDir } from "./paths.js";
 import { buildSystemPromptWithSkills } from "./skills.js";
 
@@ -85,13 +86,13 @@ export class Runner {
 		const home = homeDir();
 		this.dataDir = config.dataDir ? expandTilde(config.dataDir) : join(home, ".pion");
 		this.skillsDir = config.skillsDir ? expandTilde(config.skillsDir) : join(home, ".pion/skills");
-		const authPath = config.authPath ?? join(home, ".pion/auth.json");
+		const authPath = getAuthPath(config);
 
 		// Ensure data directory exists
 		mkdirSync(this.dataDir, { recursive: true });
 		mkdirSync(join(this.dataDir, "sessions"), { recursive: true });
 
-		this.authStorage = new AuthStorage(authPath);
+		this.authStorage = AuthStorage.create(authPath);
 		this.modelRegistry = new ModelRegistry(this.authStorage);
 	}
 

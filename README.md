@@ -20,7 +20,14 @@ A messaging bridge connecting WhatsApp and Telegram to [pi-agent](https://github
 
 ## Quick Start
 
-Prerequisites: [Bun](https://bun.sh), authenticated with [pi](https://github.com/badlogic/pi-mono) (OAuth token at `~/.pion/auth.json`)
+Prerequisites: [Bun](https://bun.sh), plus OAuth auth for pion.
+
+Pion keeps its own auth file at `~/.pion/auth.json` by default, but uses the same
+`auth.json` schema as pi for compatibility.
+
+```bash
+bun run login        # anthropic oauth -> ~/.pion/auth.json
+```
 
 ```bash
 bun install
@@ -49,11 +56,23 @@ Key concepts:
 
 ## Commands
 
+Messaging commands:
+
 | Command | Description |
 |---------|-------------|
 | `/new` | Archive current session and start fresh |
 | `/compact` | Summarize conversation and continue with reduced context |
 | `/stop` | Abort the current agent response |
+
+CLI auth commands:
+
+```bash
+bun run login              # login to anthropic and save ~/.pion/auth.json
+bun run login anthropic    # same, explicit
+bun run login list         # show supported login providers
+```
+
+`bun run login` also tries to open the OAuth URL in your desktop browser automatically.
 
 ## Monitor TUI
 
@@ -67,10 +86,10 @@ Keybindings: `Ctrl+T` toggle thinking blocks, `Ctrl+O` toggle tool expansion.
 
 ## Runtime Directory
 
-```
+```text
 ~/.pion/
 ├── config.yaml
-├── auth.json                (Anthropic OAuth — shared with pi)
+├── auth.json                (pion auth; schema-compatible with pi auth.json)
 ├── sessions/                (JSONL conversation history)
 │   └── archive/             (archived sessions from /new)
 ├── skills/                  (skill definitions)
@@ -84,6 +103,8 @@ Keybindings: `Ctrl+T` toggle thinking blocks, `Ctrl+O` toggle tool expansion.
         ├── memory/          (additional .md files)
         └── stickers.yaml    (telegram sticker mappings)
 ```
+
+You can override the auth location with `authPath` in `~/.pion/config.yaml`.
 
 ## Development
 

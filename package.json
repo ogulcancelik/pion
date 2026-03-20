@@ -8,6 +8,7 @@
     "dev": "bun run --watch src/daemon.ts",
     "start": "bun run src/daemon.ts",
     "daemon": "bun run src/daemon.ts",
+    "login": "bun run scripts/login.ts",
     "whatsapp:pair": "bun run scripts/whatsapp-pair.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",

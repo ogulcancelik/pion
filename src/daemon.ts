@@ -44,9 +44,13 @@ class Daemon {
 	constructor(config: Config) {
 		this.config = config;
 		this.router = new Router(config);
-		this.runner = new Runner({ dataDir: config.dataDir, skillsDir: config.skillsDir });
+		this.runner = new Runner({
+			dataDir: config.dataDir,
+			skillsDir: config.skillsDir,
+			authPath: config.authPath,
+		});
 		this.commands = new Commands();
-		this.compactor = new Compactor();
+		this.compactor = new Compactor({ authPath: config.authPath });
 	}
 
 	async start(): Promise<void> {
