@@ -91,9 +91,9 @@ export function createSendStickerTool(
 		async execute(
 			_toolCallId: string,
 			params: SendStickerParams,
+			_signal: AbortSignal | undefined,
 			_onUpdate: AgentToolUpdateCallback<SendStickerDetails> | undefined,
 			_ctx: ExtensionContext,
-			_signal?: AbortSignal,
 		): Promise<AgentToolResult<SendStickerDetails>> {
 			const stickers = loadStickers(workspacePath);
 			const fileId = stickers[params.name];
@@ -168,9 +168,9 @@ export function createSendFileTool(
 		async execute(
 			_toolCallId: string,
 			params: SendFileParams,
+			_signal: AbortSignal | undefined,
 			_onUpdate: AgentToolUpdateCallback<SendFileDetails> | undefined,
 			_ctx: ExtensionContext,
-			_signal?: AbortSignal,
 		): Promise<AgentToolResult<SendFileDetails>> {
 			try {
 				const result = await provider.sendFile(chatId, params.path, {

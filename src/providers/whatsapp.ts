@@ -151,7 +151,7 @@ export class WhatsAppProvider implements Provider {
 		for (const msg of event.messages) {
 			const normalized = this.normalizeMessage(msg);
 			if (normalized) {
-				this.messageHandler(normalized).catch((err) => {
+				Promise.resolve(this.messageHandler(normalized)).catch((err: unknown) => {
 					console.error("[whatsapp] Error handling message:", err);
 				});
 			}
@@ -198,7 +198,7 @@ export class WhatsAppProvider implements Provider {
 			id: key.id ?? "",
 			chatId: key.remoteJid ?? "",
 			senderId: senderId ?? "",
-			senderName: msg.pushName,
+			senderName: msg.pushName ?? undefined,
 			text,
 			isGroup,
 			provider: "whatsapp",

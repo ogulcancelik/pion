@@ -57,8 +57,8 @@ describe("createSendStickerTool", () => {
 			"test-id",
 			{ name: "pepe_happy" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(provider.sendSticker).toHaveBeenCalledWith(CHAT_ID, "ABC123");
@@ -79,8 +79,8 @@ describe("createSendStickerTool", () => {
 			"test-id",
 			{ name: "pepe_unknown" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(provider.sendSticker).not.toHaveBeenCalled();
@@ -100,8 +100,8 @@ describe("createSendStickerTool", () => {
 			"test-id",
 			{ name: "anything" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(provider.sendSticker).not.toHaveBeenCalled();
@@ -122,8 +122,8 @@ describe("createSendStickerTool", () => {
 			"test-id",
 			{ name: "pepe_happy" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(result.details?.success).toBe(false);
@@ -153,8 +153,8 @@ describe("createSendFileTool", () => {
 			"test-id",
 			{ path: "/tmp/report.pdf" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(provider.sendFile).toHaveBeenCalledWith(CHAT_ID, "/tmp/report.pdf", {
@@ -177,8 +177,8 @@ describe("createSendFileTool", () => {
 			"test-id",
 			{ path: "/tmp/photo.jpg", caption: "Check this out" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(provider.sendFile).toHaveBeenCalledWith(CHAT_ID, "/tmp/photo.jpg", {
@@ -196,8 +196,8 @@ describe("createSendFileTool", () => {
 			"test-id",
 			{ path: "/nonexistent/file.pdf" },
 			undefined,
-			{} as any,
 			undefined,
+			{} as any,
 		);
 
 		expect(result.details?.success).toBe(false);

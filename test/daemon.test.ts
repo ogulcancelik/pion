@@ -120,8 +120,9 @@ describe("Daemon components", () => {
 				chatId: "some-chat",
 				senderId: "unknown-sender",
 				text: "hello",
-				timestamp: Date.now(),
+				timestamp: new Date(),
 				isGroup: false,
+				raw: {},
 			});
 
 			// Example config routes all DMs to main
@@ -139,8 +140,9 @@ describe("Daemon components", () => {
 				chatId: "some-group",
 				senderId: "someone",
 				text: "hey all",
-				timestamp: Date.now(),
+				timestamp: new Date(),
 				isGroup: true,
+				raw: {},
 			});
 
 			// Example config ignores unmatched groups (agent: null)
@@ -158,8 +160,9 @@ describe("Daemon components", () => {
 				chatId: "direct-chat",
 				senderId: "+1234567890",
 				text: "hi",
-				timestamp: Date.now(),
+				timestamp: new Date(),
 				isGroup: false,
+				raw: {},
 			});
 
 			expect(result.agentName).toBe("main");
@@ -176,8 +179,9 @@ describe("Daemon components", () => {
 				chatId: "chat-123",
 				senderId: "user-456",
 				text: "test",
-				timestamp: Date.now(),
+				timestamp: new Date(),
 				isGroup: false,
+				raw: {},
 			});
 
 			expect(result.contextKey).toStartWith("telegram:");

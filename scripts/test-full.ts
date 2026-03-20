@@ -12,11 +12,12 @@ import { Runner } from "../src/core/runner.js";
 import { ensureWorkspace } from "../src/core/workspace.js";
 import type { Config } from "../src/config/schema.js";
 
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-if (!TOKEN) {
+const token = process.env.TELEGRAM_BOT_TOKEN;
+if (!token) {
 	console.error("Set TELEGRAM_BOT_TOKEN environment variable");
 	process.exit(1);
 }
+const TOKEN: string = token;
 
 // Simple config for testing
 const config: Config = {

@@ -174,7 +174,7 @@ describe("Runner", () => {
 
 			const sessionFile = runner.getSessionFile("test:session:header");
 			const content = readFileSync(sessionFile, "utf-8");
-			const firstLine = JSON.parse(content.split("\n")[0]);
+			const firstLine = JSON.parse(content.split("\n")[0]!);
 
 			expect(firstLine.type).toBe("session");
 			expect(firstLine.version).toBe(3);
@@ -189,7 +189,7 @@ describe("Runner", () => {
 
 			const sessionFile = runner.getSessionFile("test:summary:wrap");
 			const content = readFileSync(sessionFile, "utf-8");
-			const secondLine = JSON.parse(content.split("\n")[1]);
+			const secondLine = JSON.parse(content.split("\n")[1]!);
 
 			expect(secondLine.type).toBe("message");
 			expect(secondLine.id).toMatch(/^summary-/);

@@ -90,7 +90,10 @@ const markdownTheme = getMarkdownTheme();
 
 // Access the global theme instance for styling our own components
 const THEME_KEY = Symbol.for("@mariozechner/pi-coding-agent:theme");
-const theme: Theme = (globalThis as Record<symbol, Theme>)[THEME_KEY];
+const theme = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY]!;
+if (!theme) {
+	throw new Error("Pi theme was not initialized");
+}
 
 // ============================================================================
 // Session File Handling
@@ -513,7 +516,8 @@ function computeStats(entries: SessionEntry[]): SessionStats {
 		}
 	}
 
-	let lastAssistantUsage: SessionEntry["message"]["usage"] | undefined;
+	type MessageUsage = NonNullable<NonNullable<SessionEntry["message"]>["usage"]>;
+	let lastAssistantUsage: MessageUsage | undefined;
 
 	for (const entry of entries) {
 		if (entry.type === "message" && entry.message?.role === "assistant" && entry.message.usage) {

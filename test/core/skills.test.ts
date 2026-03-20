@@ -45,8 +45,8 @@ Instructions for browsing...
 		const result = loadSkills(skillsDir);
 
 		expect(result.skills).toHaveLength(1);
-		expect(result.skills[0].name).toBe("web-browse");
-		expect(result.skills[0].description).toBe("Browse the web using a headless browser");
+		expect(result.skills[0]!.name).toBe("web-browse");
+		expect(result.skills[0]!.description).toBe("Browse the web using a headless browser");
 	});
 
 	test("loads multiple skills", () => {

@@ -413,7 +413,7 @@ class RunnerSession {
 	 */
 	getContextUsage(): { percent: number } | null {
 		const usage = this.agentSession?.getContextUsage();
-		if (!usage) return null;
+		if (!usage || usage.percent === null) return null;
 		return { percent: usage.percent };
 	}
 
@@ -430,7 +430,7 @@ class RunnerSession {
 		const now = new Date().toISOString();
 		let messagePrefix = `[${now}`;
 		const usage = this.agentSession.getContextUsage();
-		if (usage) {
+		if (usage && usage.percent !== null) {
 			const pct = Math.round(usage.percent);
 			messagePrefix += ` | Context: ${pct}%`;
 		}
@@ -503,13 +503,13 @@ class RunnerSession {
 			let messagePrefix = `[${now}`;
 
 			const usage = this.agentSession.getContextUsage();
-			if (usage) {
+			if (usage && usage.percent !== null) {
 				const pct = Math.round(usage.percent);
 				messagePrefix += ` | Context: ${pct}%`;
 			}
 			messagePrefix += "]\n\n";
 
-			await this.agentSession.prompt(messagePrefix + text, images);
+			await this.agentSession.prompt(messagePrefix + text, images ? { images } : undefined);
 
 			return textBlocks.join("\n\n");
 		} finally {

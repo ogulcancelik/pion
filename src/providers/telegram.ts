@@ -24,6 +24,13 @@ export class TelegramProvider implements Provider {
 		this.setupHandlers();
 	}
 
+	private dispatchMessage(message: Message): void {
+		if (!this.messageHandler) return;
+		Promise.resolve(this.messageHandler(message)).catch((err: unknown) => {
+			console.error("[telegram] handler error:", err);
+		});
+	}
+
 	private setupHandlers(): void {
 		// Handle text messages
 		this.bot.on("message:text", async (ctx) => {
@@ -44,7 +51,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
+			this.dispatchMessage(message);
 		});
 
 		// Handle photos
@@ -79,7 +86,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
+			this.dispatchMessage(message);
 		});
 
 		// Handle documents
@@ -113,7 +120,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
+			this.dispatchMessage(message);
 		});
 
 		// Handle stickers
@@ -143,7 +150,7 @@ export class TelegramProvider implements Provider {
 				raw: msg,
 			};
 
-			void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
+			this.dispatchMessage(message);
 		});
 
 		// Handle voice messages
@@ -210,7 +217,7 @@ export class TelegramProvider implements Provider {
 					raw: msg,
 				};
 
-				void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
+				this.dispatchMessage(message);
 			} catch (err) {
 				console.error("[telegram] Voice transcription failed:", err instanceof Error ? err.message : err);
 				
@@ -227,7 +234,7 @@ export class TelegramProvider implements Provider {
 					raw: msg,
 				};
 
-				void this.messageHandler(message).catch((err) => console.error("[telegram] handler error:", err));
+				this.dispatchMessage(message);
 			}
 		});
 
