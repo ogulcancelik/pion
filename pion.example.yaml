@@ -13,6 +13,11 @@ whatsapp:
 # File format is compatible with pi auth.json.
 # authPath: "~/.pion/auth.json"
 
+# Message debounce window in milliseconds (default: 5000).
+# Batches rapid-fire messages into a single prompt.
+# Set to 0 to disable debouncing.
+# debounceMs: 5000
+
 # Agent definitions
 agents:
   main:

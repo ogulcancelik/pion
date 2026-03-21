@@ -97,7 +97,10 @@ describe("Runner", () => {
 			expect(existsSync(archiveDir)).toBe(false);
 
 			// Write a session file
-			writeFileSync(sessionFile, JSON.stringify({ type: "session", timestamp: "2025-06-01T12:00:00Z" }) + "\n");
+			writeFileSync(
+				sessionFile,
+				`${JSON.stringify({ type: "session", timestamp: "2025-06-01T12:00:00Z" })}\n`,
+			);
 
 			runner.clearSession(contextKey);
 
@@ -119,7 +122,7 @@ describe("Runner", () => {
 			writeFileSync(existingArchive, "existing\n");
 
 			// Write session file
-			writeFileSync(sessionFile, JSON.stringify({ type: "session", timestamp }) + "\n");
+			writeFileSync(sessionFile, `${JSON.stringify({ type: "session", timestamp })}\n`);
 
 			runner.clearSession(contextKey);
 
@@ -174,7 +177,7 @@ describe("Runner", () => {
 
 			const sessionFile = runner.getSessionFile("test:session:header");
 			const content = readFileSync(sessionFile, "utf-8");
-			const firstLine = JSON.parse(content.split("\n")[0]!);
+			const firstLine = JSON.parse(content.split("\n")[0] || "{}");
 
 			expect(firstLine.type).toBe("session");
 			expect(firstLine.version).toBe(3);
@@ -189,16 +192,14 @@ describe("Runner", () => {
 
 			const sessionFile = runner.getSessionFile("test:summary:wrap");
 			const content = readFileSync(sessionFile, "utf-8");
-			const secondLine = JSON.parse(content.split("\n")[1]!);
+			const secondLine = JSON.parse(content.split("\n")[1] || "{}");
 
 			expect(secondLine.type).toBe("message");
 			expect(secondLine.id).toMatch(/^summary-/);
 			expect(secondLine.message.role).toBe("user");
 			expect(secondLine.message.content).toBeArrayOfSize(1);
 			expect(secondLine.message.content[0].type).toBe("text");
-			expect(secondLine.message.content[0].text).toBe(
-				`[Previous session summary]\n\n${summary}`,
-			);
+			expect(secondLine.message.content[0].text).toBe(`[Previous session summary]\n\n${summary}`);
 		});
 
 		test("archives existing session before priming", () => {
@@ -208,7 +209,7 @@ describe("Runner", () => {
 			// Write an existing session
 			writeFileSync(
 				sessionFile,
-				JSON.stringify({ type: "session", timestamp: "2025-01-01T00:00:00Z" }) + "\n",
+				`${JSON.stringify({ type: "session", timestamp: "2025-01-01T00:00:00Z" })}\n`,
 			);
 
 			// Prime with new summary (should archive old one first)

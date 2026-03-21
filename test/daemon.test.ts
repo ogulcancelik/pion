@@ -47,7 +47,7 @@ describe("Daemon components", () => {
 		test("example config has telegram section", () => {
 			const config = loadConfig("pion.example.yaml");
 			expect(config.telegram).toBeDefined();
-			expect(config.telegram!.botToken).toBeString();
+			expect(config.telegram?.botToken).toBeString();
 		});
 
 		test("throws on missing config file", () => {

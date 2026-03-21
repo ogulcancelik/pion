@@ -102,11 +102,14 @@ export class Runner {
 	 * @param onMessage Called with each complete text block as the agent produces it
 	 *   (e.g., text before a tool call, text between tool calls, final text).
 	 *   Each call contains a full, self-contained message — no partial streams.
+	 * @param isCancelled Optional callback checked at async boundaries.
+	 *   If it returns true, processing is aborted early and the response is empty.
 	 */
 	async process(
 		message: Message,
 		context: RunnerContext,
 		onMessage?: (text: string) => void,
+		isCancelled?: () => boolean,
 	): Promise<ProcessResult> {
 		let session = this.sessions.get(context.contextKey);
 
@@ -115,9 +118,13 @@ export class Runner {
 			this.sessions.set(context.contextKey, session);
 		}
 
+		if (isCancelled?.()) return { response: "", warnings: [] };
+
 		const images = await this.fetchImages(message);
 
-		const response = await session.prompt(message.text, images, onMessage);
+		if (isCancelled?.()) return { response: "", warnings: [] };
+
+		const response = await session.prompt(message.text, images, onMessage, isCancelled);
 
 		// Check for context warnings
 		const warnings = this.checkContextWarnings(context.contextKey, session);
@@ -128,7 +135,9 @@ export class Runner {
 	/**
 	 * Fetch and convert media attachments to base64 images.
 	 */
-	private async fetchImages(message: Message): Promise<Array<{ type: "image"; data: string; mimeType: string }>> {
+	private async fetchImages(
+		message: Message,
+	): Promise<Array<{ type: "image"; data: string; mimeType: string }>> {
 		const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
 
 		if (!message.media || message.media.length === 0) {
@@ -460,10 +469,13 @@ class RunnerSession {
 		text: string,
 		images?: Array<{ type: "image"; data: string; mimeType: string }>,
 		onMessage?: (text: string) => void,
+		isCancelled?: () => boolean,
 	): Promise<string> {
 		if (!this.initialized) {
 			await this.initialize();
 		}
+
+		if (isCancelled?.()) return "";
 
 		if (!this.agentSession) {
 			throw new Error("Session not initialized");

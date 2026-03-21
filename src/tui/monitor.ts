@@ -17,10 +17,9 @@
 import { existsSync, readFileSync, readdirSync, statSync, watch } from "node:fs";
 import { join } from "node:path";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { homeDir } from "../core/paths.js";
 import {
-	type Theme,
 	AssistantMessageComponent,
+	type Theme,
 	ToolExecutionComponent,
 	UserMessageComponent,
 	getMarkdownTheme,
@@ -37,6 +36,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
+import { homeDir } from "../core/paths.js";
 
 // ============================================================================
 // Types
@@ -90,10 +90,14 @@ const markdownTheme = getMarkdownTheme();
 
 // Access the global theme instance for styling our own components
 const THEME_KEY = Symbol.for("@mariozechner/pi-coding-agent:theme");
-const theme = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY]!;
-if (!theme) {
-	throw new Error("Pi theme was not initialized");
+function requireTheme(): Theme {
+	const theme = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];
+	if (!theme) {
+		throw new Error("Pi theme was not initialized");
+	}
+	return theme;
 }
+const theme = requireTheme();
 
 // ============================================================================
 // Session File Handling
@@ -395,7 +399,11 @@ class FooterComponent implements Component {
 		} = this.stats;
 
 		// Line 1: Path
-		const pwdLine = truncateToWidth(theme.fg("dim", shortenPath(cwd)), width, theme.fg("dim", "..."));
+		const pwdLine = truncateToWidth(
+			theme.fg("dim", shortenPath(cwd)),
+			width,
+			theme.fg("dim", "..."),
+		);
 
 		// Line 2: Stats and model
 		const statsParts: string[] = [];

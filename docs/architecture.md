@@ -146,9 +146,25 @@ The runner tracks context window usage and sends warnings:
 - **85%** — first warning with `/new` and `/compact` hints
 - **95%** — urgent warning
 
-## Steering
+## Message Debouncing
 
-If a user sends a message while the agent is already processing, pion uses pi-agent's steering to inject the new message mid-response (after the current tool call completes). No separate response is sent — the steering gets woven into the ongoing response.
+Chat users naturally send rapid-fire messages (fragments of a single thought). Instead of processing each separately, pion debounces them:
+
+1. Message arrives → buffered, 5-second timer starts
+2. Another message within 5s → buffer it, reset timer
+3. Timer expires (5s of silence) → merge all buffered messages into one prompt
+
+This means the agent always sees the user's complete thought, not fragments.
+
+**Merging:** Texts are joined with `\n`. Media from all messages is collected. First message's identity (id, chatId, sender) is used; last message's timestamp.
+
+**Commands bypass debounce:** `/stop`, `/new`, `/compact` execute immediately. They also cancel any pending buffered messages.
+
+**Superseding:** If the agent is already processing when a new message arrives, the old run is superseded — a generation counter ensures the old run bails at its next async checkpoint and suppresses output. The new message enters the debounce buffer normally.
+
+**Configuration:** `debounceMs` in config (default: 5000). Set to `0` to disable debouncing entirely.
+
+**Note:** In group chats with `per-chat` isolation, messages from different senders within the debounce window will be merged into one prompt. This is an acceptable tradeoff for the current use case.
 
 ## Config Schema
 
@@ -157,6 +173,7 @@ If a user sends a message while the agent is already processing, pion uses pi-ag
 
 dataDir: ~/.pion             # Where sessions and agents live (default)
 skillsDir: ~/.pion/skills    # Where skills are loaded from (default)
+debounceMs: 5000             # Message debounce window (default: 5000, 0 to disable)
 
 telegram:
   botToken: "..."

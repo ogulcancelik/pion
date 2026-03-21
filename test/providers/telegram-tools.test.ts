@@ -1,7 +1,8 @@
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 import {
 	createSendFileTool,
 	createSendStickerTool,
@@ -15,10 +16,7 @@ const emptyWorkspace = join(tmpdir(), `pion-test-empty-${Date.now()}`);
 
 beforeAll(() => {
 	mkdirSync(tmpWorkspace, { recursive: true });
-	writeFileSync(
-		join(tmpWorkspace, "stickers.yaml"),
-		"pepe_happy: ABC123\npepe_sad: DEF456",
-	);
+	writeFileSync(join(tmpWorkspace, "stickers.yaml"), "pepe_happy: ABC123\npepe_sad: DEF456");
 	mkdirSync(emptyWorkspace, { recursive: true });
 });
 
@@ -30,14 +28,13 @@ afterAll(() => {
 function createMockProvider(overrides?: Partial<TelegramProvider>) {
 	return {
 		sendSticker: mock(() => Promise.resolve()),
-		sendFile: mock(() =>
-			Promise.resolve({ messageId: "123", chatId: "456" }),
-		),
+		sendFile: mock(() => Promise.resolve({ messageId: "123", chatId: "456" })),
 		...overrides,
 	} as unknown as TelegramProvider;
 }
 
 const CHAT_ID = "test-chat-123";
+const mockExtensionContext = {} as ExtensionContext;
 
 describe("createSendStickerTool", () => {
 	test("returns tool with correct name and description", () => {
@@ -58,7 +55,7 @@ describe("createSendStickerTool", () => {
 			{ name: "pepe_happy" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(provider.sendSticker).toHaveBeenCalledWith(CHAT_ID, "ABC123");
@@ -80,7 +77,7 @@ describe("createSendStickerTool", () => {
 			{ name: "pepe_unknown" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(provider.sendSticker).not.toHaveBeenCalled();
@@ -101,7 +98,7 @@ describe("createSendStickerTool", () => {
 			{ name: "anything" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(provider.sendSticker).not.toHaveBeenCalled();
@@ -114,7 +111,9 @@ describe("createSendStickerTool", () => {
 
 	test("execute handles provider error", async () => {
 		const provider = createMockProvider({
-			sendSticker: mock(() => Promise.reject(new Error("Network error"))) as any,
+			sendSticker: mock(() =>
+				Promise.reject(new Error("Network error")),
+			) as TelegramProvider["sendSticker"],
 		});
 		const tool = createSendStickerTool(provider, CHAT_ID, tmpWorkspace);
 
@@ -123,7 +122,7 @@ describe("createSendStickerTool", () => {
 			{ name: "pepe_happy" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(result.details?.success).toBe(false);
@@ -154,7 +153,7 @@ describe("createSendFileTool", () => {
 			{ path: "/tmp/report.pdf" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(provider.sendFile).toHaveBeenCalledWith(CHAT_ID, "/tmp/report.pdf", {
@@ -178,7 +177,7 @@ describe("createSendFileTool", () => {
 			{ path: "/tmp/photo.jpg", caption: "Check this out" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(provider.sendFile).toHaveBeenCalledWith(CHAT_ID, "/tmp/photo.jpg", {
@@ -188,7 +187,9 @@ describe("createSendFileTool", () => {
 
 	test("execute handles provider error", async () => {
 		const provider = createMockProvider({
-			sendFile: mock(() => Promise.reject(new Error("File not found"))) as any,
+			sendFile: mock(() =>
+				Promise.reject(new Error("File not found")),
+			) as TelegramProvider["sendFile"],
 		});
 		const tool = createSendFileTool(provider, CHAT_ID);
 
@@ -197,7 +198,7 @@ describe("createSendFileTool", () => {
 			{ path: "/nonexistent/file.pdf" },
 			undefined,
 			undefined,
-			{} as any,
+			mockExtensionContext,
 		);
 
 		expect(result.details?.success).toBe(false);

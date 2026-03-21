@@ -42,4 +42,50 @@ describe("validateConfig", () => {
 		});
 		expect(errors).toHaveLength(0);
 	});
+
+	test("accepts valid debounceMs values", () => {
+		const base = {
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		};
+
+		expect(validateConfig({ ...base, debounceMs: 0 })).toHaveLength(0);
+		expect(validateConfig({ ...base, debounceMs: 3000 })).toHaveLength(0);
+		expect(validateConfig({ ...base, debounceMs: 500 })).toHaveLength(0);
+	});
+
+	test("rejects negative debounceMs", () => {
+		const errors = validateConfig({
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+			debounceMs: -1,
+		});
+		expect(errors).toContain("debounceMs must be non-negative");
+	});
+
+	test("rejects non-numeric debounceMs", () => {
+		const errors = validateConfig({
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+			debounceMs: "3000",
+		});
+		expect(errors).toContain("debounceMs must be a finite number");
+	});
+
+	test("rejects Infinity debounceMs", () => {
+		const errors = validateConfig({
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+			debounceMs: Number.POSITIVE_INFINITY,
+		});
+		expect(errors).toContain("debounceMs must be a finite number");
+	});
+
+	test("accepts config without debounceMs (uses default)", () => {
+		const errors = validateConfig({
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
 });

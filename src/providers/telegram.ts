@@ -1,6 +1,6 @@
-import { existsSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import { Bot, InputFile } from "grammy";
 import { markdownToTelegramHtml } from "./telegram-format.js";
 import type { MediaAttachment, Message, OutboundMessage, Provider, SendResult } from "./types.js";
@@ -171,7 +171,7 @@ export class TelegramProvider implements Provider {
 				// Download the voice file
 				const file = await ctx.api.getFile(voice.file_id);
 				const fileUrl = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
-				
+
 				const response = await fetch(fileUrl);
 				if (!response.ok) {
 					console.error("[telegram] Failed to download voice file");
@@ -200,8 +200,12 @@ export class TelegramProvider implements Provider {
 				).trim();
 
 				// Cleanup temp files
-				try { unlinkSync(oggPath); } catch {}
-				try { unlinkSync(wavPath); } catch {}
+				try {
+					unlinkSync(oggPath);
+				} catch {}
+				try {
+					unlinkSync(wavPath);
+				} catch {}
 
 				console.log(`[telegram] Transcribed voice: "${transcription.slice(0, 50)}..."`);
 
@@ -219,8 +223,11 @@ export class TelegramProvider implements Provider {
 
 				this.dispatchMessage(message);
 			} catch (err) {
-				console.error("[telegram] Voice transcription failed:", err instanceof Error ? err.message : err);
-				
+				console.error(
+					"[telegram] Voice transcription failed:",
+					err instanceof Error ? err.message : err,
+				);
+
 				// Still send message so user knows it was received
 				const message: Message = {
 					id: String(msg.message_id),
@@ -327,7 +334,9 @@ export class TelegramProvider implements Provider {
 				chatId: String(result.chat.id),
 			};
 		} finally {
-			try { unlinkSync(tmpFile); } catch {}
+			try {
+				unlinkSync(tmpFile);
+			} catch {}
 		}
 	}
 

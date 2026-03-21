@@ -9,6 +9,10 @@ export interface Config {
 	skillsDir?: string;
 	/** Auth storage path (default: ~/.pion/auth.json, same schema as pi auth.json) */
 	authPath?: string;
+	/** Message debounce window in milliseconds (default: 3000).
+	 *  Batches rapid-fire messages into a single prompt.
+	 *  Set to 0 to disable debouncing. */
+	debounceMs?: number;
 	telegram?: TelegramConfig;
 	whatsapp?: WhatsAppConfig;
 	agents: Record<string, AgentConfig>;
@@ -76,6 +80,15 @@ export function validateConfig(config: unknown): string[] {
 	// Must have routes
 	if (!Array.isArray(cfg.routes)) {
 		errors.push("Config must have 'routes' array");
+	}
+
+	// Validate debounceMs if present
+	if (cfg.debounceMs !== undefined) {
+		if (typeof cfg.debounceMs !== "number" || !Number.isFinite(cfg.debounceMs as number)) {
+			errors.push("debounceMs must be a finite number");
+		} else if ((cfg.debounceMs as number) < 0) {
+			errors.push("debounceMs must be non-negative");
+		}
 	}
 
 	// Validate routes reference existing agents
