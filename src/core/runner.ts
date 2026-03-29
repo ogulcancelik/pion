@@ -69,6 +69,15 @@ interface WarningState {
 	warned95: boolean;
 }
 
+export function parseModelString(modelString: string): [string, string] {
+	const slashIndex = modelString.indexOf("/");
+	if (slashIndex > 0 && slashIndex < modelString.length - 1) {
+		return [modelString.slice(0, slashIndex), modelString.slice(slashIndex + 1)];
+	}
+	// Default to anthropic if no provider specified
+	return ["anthropic", modelString];
+}
+
 /**
  * Runner manages pi-agent sessions and processes messages.
  *
@@ -93,7 +102,9 @@ export class Runner {
 		mkdirSync(join(this.dataDir, "sessions"), { recursive: true });
 
 		this.authStorage = AuthStorage.create(authPath);
-		this.modelRegistry = new ModelRegistry(this.authStorage);
+		// Explicitly set models.json path to workspace dir
+		const modelsJsonPath = join(this.dataDir, "agents/main/models.json");
+		this.modelRegistry = ModelRegistry.create(this.authStorage, modelsJsonPath);
 	}
 
 	/**
@@ -531,7 +542,7 @@ class RunnerSession {
 
 	private async initialize(): Promise<void> {
 		// Parse model string: "anthropic/claude-sonnet-4-20250514" → provider + modelId
-		const [provider, modelId] = this.parseModelString(this.config.agentConfig.model);
+		const [provider, modelId] = parseModelString(this.config.agentConfig.model);
 
 		// Find the model
 		const model = await this.config.modelRegistry.find(provider, modelId);
@@ -571,12 +582,4 @@ class RunnerSession {
 		this.initialized = true;
 	}
 
-	private parseModelString(modelString: string): [string, string] {
-		const parts = modelString.split("/");
-		if (parts.length === 2 && parts[0] && parts[1]) {
-			return [parts[0], parts[1]];
-		}
-		// Default to anthropic if no provider specified
-		return ["anthropic", modelString];
-	}
 }

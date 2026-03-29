@@ -194,7 +194,7 @@ export class Compactor {
 	constructor(config: CompactorConfig = {}) {
 		const authPath = getAuthPath(config);
 		this.authStorage = AuthStorage.create(authPath);
-		this.modelRegistry = new ModelRegistry(this.authStorage);
+		this.modelRegistry = ModelRegistry.create(this.authStorage);
 	}
 
 	/**

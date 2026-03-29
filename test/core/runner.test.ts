@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Runner } from "../../src/core/runner.js";
+import { parseModelString, Runner } from "../../src/core/runner.js";
 
 describe("Runner", () => {
 	const testDir = join(import.meta.dir, ".test-runner");
@@ -249,6 +249,22 @@ describe("Runner", () => {
 	describe("abort", () => {
 		test("returns false for unknown context key", async () => {
 			expect(await runner.abort("unknown:key")).toBe(false);
+		});
+	});
+
+	describe("parseModelString", () => {
+		test("keeps nested slashes inside model id", () => {
+			expect(parseModelString("fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo")).toEqual([
+				"fireworks-ai",
+				"accounts/fireworks/routers/kimi-k2p5-turbo",
+			]);
+		});
+
+		test("defaults to anthropic when provider prefix is missing", () => {
+			expect(parseModelString("claude-opus-4-6")).toEqual([
+				"anthropic",
+				"claude-opus-4-6",
+			]);
 		});
 	});
 });
