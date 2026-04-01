@@ -252,6 +252,77 @@ describe("Runner", () => {
 		});
 	});
 
+	describe("process", () => {
+		test("uses runner-scoped model registry for custom provider auth", async () => {
+			const workspaceDir = join(testDir, "agents", "main");
+			mkdirSync(workspaceDir, { recursive: true });
+			writeFileSync(join(workspaceDir, "IDENTITY.md"), "test agent\n");
+			writeFileSync(
+				join(workspaceDir, "models.json"),
+				JSON.stringify(
+					{
+						providers: {
+							"test-provider": {
+								baseUrl: "http://127.0.0.1:1/v1",
+								apiKey: "TEST_PROVIDER_API_KEY",
+								api: "openai-completions",
+								models: [
+									{
+										id: "demo-model",
+										name: "Demo Model",
+										input: ["text"],
+										cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+										contextWindow: 4096,
+										maxTokens: 256,
+									},
+								],
+							},
+						},
+					},
+					null,
+					2,
+				) + "\n",
+			);
+			writeFileSync(
+				join(testDir, "auth.json"),
+				JSON.stringify(
+					{
+						"test-provider": {
+							type: "api_key",
+							key: "test-secret-key",
+						},
+					},
+					null,
+					2,
+				) + "\n",
+			);
+
+			const isolatedRunner = new Runner({
+				dataDir: testDir,
+				authPath: join(testDir, "auth.json"),
+			});
+
+			const session = await (isolatedRunner as any).createSession({
+				contextKey: "telegram:contact:user-1",
+				agentConfig: {
+					model: "test-provider/demo-model",
+					workspace: workspaceDir,
+					skills: [],
+				},
+			});
+
+			await session.initialize();
+
+			expect(session.agentSession).toBeDefined();
+			expect(session.agentSession.modelRegistry).toBe(session.config.modelRegistry);
+			expect(session.agentSession.modelRegistry.find("test-provider", "demo-model")).toBeDefined();
+			expect(session.agentSession.modelRegistry.hasConfiguredAuth({
+				provider: "test-provider",
+				id: "demo-model",
+			} as any)).toBe(true);
+		});
+	});
+
 	describe("parseModelString", () => {
 		test("keeps nested slashes inside model id", () => {
 			expect(parseModelString("fireworks-ai/accounts/fireworks/routers/kimi-k2p5-turbo")).toEqual([

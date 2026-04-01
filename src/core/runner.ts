@@ -570,6 +570,7 @@ class RunnerSession {
 		const result = await createAgentSession({
 			model,
 			sessionManager,
+			modelRegistry: this.config.modelRegistry,
 			// No-op resource loader — pion manages its own system prompt and doesn't use
 			// pi's extension/skill/theme discovery (which requires npm on PATH)
 			resourceLoader: createNoOpResourceLoader(systemPrompt),
