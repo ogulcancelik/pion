@@ -37,6 +37,7 @@ import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-sta
 import { ensureWorkspace } from "./core/workspace.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
 import { TelegramProvider } from "./providers/telegram.js";
+import { TelegramStatusSink } from "./providers/telegram-status.js";
 import type { Message, Provider } from "./providers/types.js";
 import { WhatsAppProvider } from "./providers/whatsapp.js";
 
@@ -55,6 +56,7 @@ class Daemon {
 	private recoveryInfo: StartupRecoveryInfo | null = null;
 	private providers: Provider[] = [];
 	private telegramProvider: TelegramProvider | null = null;
+	private detachTelegramStatusSink?: () => void;
 	private shuttingDown = false;
 	/**
 	 * Generation counter per context. Incremented when a run is superseded
@@ -138,6 +140,7 @@ class Daemon {
 			await telegram.start();
 			this.providers.push(telegram);
 			this.telegramProvider = telegram;
+			this.detachTelegramStatusSink = new TelegramStatusSink(telegram).attach(this.runtimeEvents);
 
 			// Send startup notification if configured
 			if (this.config.telegram.startupNotify) {
@@ -700,6 +703,9 @@ class Daemon {
 
 		// Dispose debouncer (cancels all pending timers)
 		this.debouncer.dispose();
+
+		this.detachTelegramStatusSink?.();
+		this.detachTelegramStatusSink = undefined;
 
 		// Stop all providers
 		for (const provider of this.providers) {
