@@ -10,11 +10,12 @@ interface TelegramStatusState {
 	chatId: string;
 	handle?: StatusHandle;
 	statusLine: string;
+	detailLine?: string;
 	toolLine?: string;
 }
 
 function renderStatusText(state: TelegramStatusState): string {
-	return [state.statusLine, state.toolLine].filter(Boolean).join("\n\n");
+	return [state.statusLine, state.detailLine, state.toolLine].filter(Boolean).join("\n\n");
 }
 
 export class TelegramStatusSink {
@@ -62,6 +63,17 @@ export class TelegramStatusSink {
 		if (event.type === "runtime_processing_complete") {
 			const state = this.states.get(event.contextKey);
 			if (!state?.handle) return;
+			if (event.outcome === "failed") {
+				state.statusLine = "⚠️ failed";
+				state.detailLine = event.errorMessage ? `error: ${event.errorMessage}` : undefined;
+				state.toolLine = undefined;
+				state.handle = await this.provider.upsertStatus({
+					chatId: state.chatId,
+					handle: state.handle,
+					text: renderStatusText(state),
+					actions: [],
+				});
+			}
 			await this.provider.clearStatus(state.handle);
 			this.states.delete(event.contextKey);
 		}
@@ -71,8 +83,31 @@ export class TelegramStatusSink {
 		const state = this.states.get(event.contextKey);
 		if (!state) return;
 
+		if (event.type === "message_update") {
+			state.detailLine = "thinking…";
+			state.handle = await this.provider.upsertStatus({
+				chatId: state.chatId,
+				handle: state.handle,
+				text: renderStatusText(state),
+				actions: [],
+			});
+			return;
+		}
+
 		if (event.type === "tool_execution_start") {
+			state.detailLine = undefined;
 			state.toolLine = `• ${(event.event as { toolName: string }).toolName}`;
+			state.handle = await this.provider.upsertStatus({
+				chatId: state.chatId,
+				handle: state.handle,
+				text: renderStatusText(state),
+				actions: [],
+			});
+			return;
+		}
+
+		if (event.type === "tool_execution_end") {
+			state.toolLine = undefined;
 			state.handle = await this.provider.upsertStatus({
 				chatId: state.chatId,
 				handle: state.handle,

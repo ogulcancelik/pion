@@ -104,6 +104,118 @@ describe("TelegramStatusSink", () => {
 		expect(clearStatus).toHaveBeenCalledWith(handle);
 	});
 
+	test("shows thinking state on assistant message updates", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
+		const sink = new TelegramStatusSink({
+			upsertStatus,
+			clearStatus: mock(async () => {}),
+		} as any);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-thinking",
+			timestamp: "2026-04-02T21:00:02.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "message_update",
+			event: {
+				type: "message_update",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "thinking through it" }],
+				} as any,
+				assistantMessageEvent: { type: "text_delta", delta: "thinking through it", contentIndex: 0 } as any,
+			},
+		});
+
+		expect(upsertStatus.mock.calls[1]?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: expect.stringContaining("thinking…"),
+			actions: [],
+		});
+	});
+
+	test("removes the active tool line when tool execution ends", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
+		const sink = new TelegramStatusSink({
+			upsertStatus,
+			clearStatus: mock(async () => {}),
+		} as any);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-tool-start",
+			timestamp: "2026-04-02T21:00:01.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-1",
+				toolName: "read",
+				args: { path: "docs/architecture.md" },
+			},
+		});
+		await sink.handleEvent({
+			id: "evt-tool-end",
+			timestamp: "2026-04-02T21:00:03.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_end",
+			event: {
+				type: "tool_execution_end",
+				toolCallId: "tool-1",
+				toolName: "read",
+				result: { content: [{ type: "text", text: "ok" }], isError: false },
+				isError: false,
+			},
+		});
+
+		expect(upsertStatus.mock.calls[2]?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: "⚙️ working",
+			actions: [],
+		});
+	});
+
+	test("shows a failure state before clearing on failed completion", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
+		const clearStatus = mock(async () => {});
+		const sink = new TelegramStatusSink({
+			upsertStatus,
+			clearStatus,
+		} as any);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-failed",
+			timestamp: "2026-04-02T21:00:05.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_processing_complete",
+			outcome: "failed",
+			messagesSent: 1,
+			responseLength: 12,
+			errorMessage: "network timeout",
+		});
+
+		expect(upsertStatus.mock.calls[1]?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: expect.stringContaining("failed"),
+			actions: [],
+		});
+		expect(clearStatus).toHaveBeenCalledTimes(1);
+	});
+
 	test("ignores non-telegram runtime events", async () => {
 		const upsertStatus = mock(async () => makeHandle());
 		const sink = new TelegramStatusSink({
