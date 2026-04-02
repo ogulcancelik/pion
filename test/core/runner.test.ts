@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseModelString, Runner } from "../../src/core/runner.js";
+import {
+	buildRetrySystemPrompt,
+	parseModelString,
+	Runner,
+	shouldRetryWithoutImages,
+} from "../../src/core/runner.js";
 
 describe("Runner", () => {
 	const testDir = join(import.meta.dir, ".test-runner");
@@ -320,6 +325,30 @@ describe("Runner", () => {
 				provider: "test-provider",
 				id: "demo-model",
 			} as any)).toBe(true);
+		});
+	});
+
+	describe("image error recovery", () => {
+		test("detects provider errors that should retry without images", () => {
+			const error = new Error(
+				"400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.228.content.1.image.source.base64.media_type: Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'\"}}",
+			);
+
+			expect(shouldRetryWithoutImages(error, [{ type: "image", data: "x", mimeType: "image/heic" }])).toBe(
+				true,
+			);
+		});
+
+		test("does not retry when there are no images", () => {
+			const error = new Error("image.source.base64.media_type: unsupported");
+			expect(shouldRetryWithoutImages(error, [])).toBe(false);
+		});
+
+		test("builds a system prompt that tells the agent what happened", () => {
+			const prompt = buildRetrySystemPrompt("base prompt", "unsupported image format");
+			expect(prompt).toContain("base prompt");
+			expect(prompt).toContain("unsupported image format");
+			expect(prompt).toContain("Continue without using the attached images");
 		});
 	});
 

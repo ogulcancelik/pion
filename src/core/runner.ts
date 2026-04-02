@@ -78,6 +78,22 @@ export function parseModelString(modelString: string): [string, string] {
 	return ["anthropic", modelString];
 }
 
+export function shouldRetryWithoutImages(
+	error: unknown,
+	images?: Array<{ type: "image"; data: string; mimeType: string }>,
+): boolean {
+	if (!images || images.length === 0) return false;
+	const message = error instanceof Error ? error.message : String(error);
+	return (
+		message.includes("image.source.base64.media_type") ||
+		message.includes("Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'")
+	);
+}
+
+export function buildRetrySystemPrompt(basePrompt: string, errorMessage: string): string {
+	return `${basePrompt}\n\n<System note>\nThe previous attempt to answer the user failed with this provider error:\n${errorMessage}\n\nContinue without using the attached images. Briefly explain to the user that the image format could not be processed and ask them to resend it as JPG, PNG, GIF, or WebP if needed.\n</System note>`;
+}
+
 /**
  * Runner manages pi-agent sessions and processes messages.
  *
@@ -532,7 +548,19 @@ class RunnerSession {
 			}
 			messagePrefix += "]\n\n";
 
-			await this.agentSession.prompt(messagePrefix + text, images ? { images } : undefined);
+			try {
+				await this.agentSession.prompt(messagePrefix + text, images ? { images } : undefined);
+			} catch (error) {
+				if (!shouldRetryWithoutImages(error, images)) {
+					throw error;
+				}
+
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				this.agentSession.agent.setSystemPrompt(
+					buildRetrySystemPrompt(freshSystemPrompt, errorMessage),
+				);
+				await this.agentSession.prompt(messagePrefix + text);
+			}
 
 			return textBlocks.join("\n\n");
 		} finally {
