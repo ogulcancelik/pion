@@ -88,4 +88,32 @@ describe("validateConfig", () => {
 		});
 		expect(errors).toHaveLength(0);
 	});
+
+	test("accepts telegram status clearOnComplete flag", () => {
+		const errors = validateConfig({
+			telegram: {
+				botToken: "token",
+				status: {
+					clearOnComplete: false,
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test("rejects non-boolean telegram status clearOnComplete flag", () => {
+		const errors = validateConfig({
+			telegram: {
+				botToken: "token",
+				status: {
+					clearOnComplete: "nope",
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("telegram.status.clearOnComplete must be a boolean");
+	});
 });

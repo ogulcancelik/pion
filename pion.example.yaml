@@ -4,6 +4,9 @@
 # Provider credentials
 telegram:
   botToken: "your-bot-token-here"
+  # Optional live-status behavior
+  # status:
+  #   clearOnComplete: true
 
 whatsapp:
   sessionDir: "~/.pion/whatsapp-session"

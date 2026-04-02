@@ -23,6 +23,11 @@ export interface TelegramConfig {
 	botToken: string;
 	/** Chat ID to notify on startup (optional) */
 	startupNotify?: string;
+	/** Telegram live-status behavior */
+	status?: {
+		/** Clear the live status message when a run completes (default: true) */
+		clearOnComplete?: boolean;
+	};
 }
 
 export interface WhatsAppConfig {
@@ -88,6 +93,27 @@ export function validateConfig(config: unknown): string[] {
 			errors.push("debounceMs must be a finite number");
 		} else if ((cfg.debounceMs as number) < 0) {
 			errors.push("debounceMs must be non-negative");
+		}
+	}
+
+	if (cfg.telegram !== undefined) {
+		if (typeof cfg.telegram !== "object" || cfg.telegram === null) {
+			errors.push("telegram must be an object");
+		} else {
+			const telegram = cfg.telegram as Record<string, unknown>;
+			if (telegram.status !== undefined) {
+				if (typeof telegram.status !== "object" || telegram.status === null) {
+					errors.push("telegram.status must be an object");
+				} else {
+					const status = telegram.status as Record<string, unknown>;
+					if (
+						status.clearOnComplete !== undefined &&
+						typeof status.clearOnComplete !== "boolean"
+					) {
+						errors.push("telegram.status.clearOnComplete must be a boolean");
+					}
+				}
+			}
 		}
 	}
 

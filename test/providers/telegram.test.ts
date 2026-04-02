@@ -196,6 +196,58 @@ describe("TelegramProvider", () => {
 			},
 			]);
 	});
+
+	test("upsertStatus treats telegram 'message is not modified' as a no-op success", async () => {
+		const { provider, api } = createProvider();
+		api.editMessageText = async () => {
+			throw new Error("Bad Request: message is not modified");
+		};
+
+		await expect(
+			provider.upsertStatus?.({
+				chatId: "123",
+				handle: {
+					provider: "telegram",
+					chatId: "123",
+					messageId: "42",
+				},
+				text: "same text",
+			}),
+		).resolves.toEqual({
+			provider: "telegram",
+			chatId: "123",
+			messageId: "42",
+		});
+	});
+
+	test("start registers telegram bot commands for the input menu", async () => {
+		const provider = new TelegramProvider({ botToken: "test-token" });
+		const calls: any[] = [];
+		(provider as any).bot = {
+			api: {
+				getMe: async () => ({ username: "piontestbot" }),
+				setMyCommands: async (...args: any[]) => {
+					calls.push(args);
+				},
+			},
+			start: ({ onStart }: { onStart?: () => void }) => {
+				onStart?.();
+			},
+			stop: async () => {},
+		};
+
+		await provider.start();
+
+		expect(calls).toEqual([
+			[
+				[
+					{ command: "stop", description: "stop the current run" },
+					{ command: "new", description: "clear the session and start fresh" },
+					{ command: "compact", description: "summarize and continue in a fresh session" },
+				],
+			],
+		]);
+	});
 });
 
 // Integration test - only runs with real token

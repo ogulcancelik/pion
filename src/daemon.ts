@@ -141,7 +141,9 @@ class Daemon {
 			await telegram.start();
 			this.providers.push(telegram);
 			this.telegramProvider = telegram;
-			this.detachTelegramStatusSink = new TelegramStatusSink(telegram).attach(this.runtimeEvents);
+			this.detachTelegramStatusSink = new TelegramStatusSink(telegram, {
+				clearOnComplete: this.config.telegram.status?.clearOnComplete,
+			}).attach(this.runtimeEvents);
 
 			// Send startup notification if configured
 			if (this.config.telegram.startupNotify) {

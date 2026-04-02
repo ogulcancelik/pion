@@ -314,6 +314,11 @@ export class TelegramProvider implements Provider {
 		// Verify token works
 		const me = await this.bot.api.getMe();
 		console.log(`[telegram] Connected as @${me.username}`);
+		await this.bot.api.setMyCommands([
+			{ command: "stop", description: "stop the current run" },
+			{ command: "new", description: "clear the session and start fresh" },
+			{ command: "compact", description: "summarize and continue in a fresh session" },
+		]);
 
 		// Start polling
 		this.bot.start({
@@ -346,15 +351,22 @@ export class TelegramProvider implements Provider {
 		const replyMarkup = buildInlineKeyboard(status.actions);
 
 		if (status.handle) {
-			await this.bot.api.editMessageText(
-				status.chatId,
-				Number(status.handle.messageId),
-				htmlText,
-				{
-					parse_mode: "HTML",
-					reply_markup: replyMarkup,
-				},
-			);
+			try {
+				await this.bot.api.editMessageText(
+					status.chatId,
+					Number(status.handle.messageId),
+					htmlText,
+					{
+						parse_mode: "HTML",
+						reply_markup: replyMarkup,
+					},
+				);
+			} catch (error) {
+				const errMsg = error instanceof Error ? error.message : String(error);
+				if (!errMsg.toLowerCase().includes("message is not modified")) {
+					throw error;
+				}
+			}
 			return status.handle;
 		}
 
