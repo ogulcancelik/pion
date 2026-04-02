@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, extname, join } from "node:path";
 import {
 	AuthStorage,
 	ModelRegistry,
@@ -61,6 +62,12 @@ export interface ProcessResult {
 	response: string;
 	/** System warnings to send before the response */
 	warnings: string[];
+}
+
+export interface SavedMediaAttachment {
+	type: "image" | "video" | "audio" | "document";
+	path: string;
+	mimeType?: string;
 }
 
 /** Warning state per session */
@@ -169,6 +176,147 @@ export function classifyRuntimeError(
 	return { kind: "rethrow" };
 }
 
+const SUPPORTED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+const MEDIA_FILE_EXTENSIONS: Record<string, string> = {
+	"image/jpeg": ".jpg",
+	"image/png": ".png",
+	"image/gif": ".gif",
+	"image/webp": ".webp",
+};
+
+function sanitizeFilePart(value: string): string {
+	return value.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function extensionForMedia(mimeType?: string, fileName?: string): string {
+	const normalizedMimeType = mimeType?.toLowerCase();
+	if (normalizedMimeType && MEDIA_FILE_EXTENSIONS[normalizedMimeType]) {
+		return MEDIA_FILE_EXTENSIONS[normalizedMimeType];
+	}
+	const fileExtension = fileName ? extname(fileName) : "";
+	if (fileExtension) {
+		return fileExtension.toLowerCase();
+	}
+	return ".bin";
+}
+
+export function resolveFetchedImageMimeType(
+	currentMimeType?: string,
+	responseContentType?: string | null,
+): string {
+	const normalizedResponseMimeType = responseContentType?.split(";")[0]?.trim().toLowerCase();
+	if (normalizedResponseMimeType && SUPPORTED_IMAGE_MIME_TYPES.has(normalizedResponseMimeType)) {
+		return normalizedResponseMimeType;
+	}
+	return currentMimeType || "image/jpeg";
+}
+
+export async function materializeMediaAttachments(
+	message: Message,
+	mediaDir: string,
+): Promise<SavedMediaAttachment[]> {
+	if (!message.media || message.media.length === 0) {
+		return [];
+	}
+
+	mkdirSync(mediaDir, { recursive: true });
+	const savedAttachments: SavedMediaAttachment[] = [];
+
+	for (const [index, media] of message.media.entries()) {
+		try {
+			let buffer: Buffer | null = null;
+			let mimeType = media.mimeType;
+
+			if (media.buffer) {
+				buffer = media.buffer;
+			} else if (media.url) {
+				const response = await fetch(media.url);
+				if (!response.ok) {
+					console.warn(`[runner] Failed to fetch media: ${response.status}`);
+					continue;
+				}
+				buffer = Buffer.from(await response.arrayBuffer());
+				if (media.type === "image") {
+					mimeType = resolveFetchedImageMimeType(mimeType, response.headers.get("content-type"));
+				} else {
+					mimeType = response.headers.get("content-type")?.split(";")[0] || mimeType;
+				}
+			} else {
+				continue;
+			}
+
+			const extension = extensionForMedia(mimeType, media.fileName);
+			const rawBaseName = media.fileName
+				? media.fileName.slice(0, media.fileName.length - extname(media.fileName).length)
+				: `${message.timestamp.toISOString()}-${message.id}-${index + 1}`;
+			const baseName = sanitizeFilePart(rawBaseName);
+			const filePath = join(mediaDir, `${baseName}${extension}`);
+			writeFileSync(filePath, buffer);
+			savedAttachments.push({
+				type: media.type,
+				path: filePath,
+				mimeType,
+			});
+		} catch (err) {
+			console.warn("[runner] Failed to store media:", err instanceof Error ? err.message : err);
+		}
+	}
+
+	return savedAttachments;
+}
+
+export function buildPromptTextWithMediaPaths(
+	messageText: string,
+	attachments: SavedMediaAttachment[],
+): string {
+	if (attachments.length === 0) {
+		return messageText;
+	}
+
+	const trimmedText = messageText.trim();
+	const shouldOmitPlaceholder =
+		trimmedText === "[image]" && attachments.every((attachment) => attachment.type === "image");
+	const parts: string[] = [];
+	if (trimmedText && !shouldOmitPlaceholder) {
+		parts.push(messageText);
+	}
+	parts.push(
+		attachments
+			.map((attachment) => `[User attached ${attachment.type}: ${attachment.path}]`)
+			.join("\n"),
+	);
+	return parts.join("\n\n");
+}
+
+export function findRetryBranchParentId(
+	branchEntries: Array<{
+		type?: string;
+		parentId?: string | null;
+		message?: {
+			role?: string;
+			stopReason?: string;
+			content?: Array<{ type?: string }>;
+		};
+	}>,
+): string | null | undefined {
+	const assistantError = branchEntries.at(-1);
+	const failedUserTurn = branchEntries.at(-2);
+	if (
+		assistantError?.type !== "message" ||
+		assistantError.message?.role !== "assistant" ||
+		assistantError.message?.stopReason !== "error" ||
+		failedUserTurn?.type !== "message" ||
+		failedUserTurn.message?.role !== "user"
+	) {
+		return undefined;
+	}
+	const hasImage = failedUserTurn.message.content?.some((part) => part.type === "image");
+	if (!hasImage) {
+		return undefined;
+	}
+	return failedUserTurn.parentId ?? null;
+}
+
 export function buildRuntimeErrorSystemPrompt(
 	basePrompt: string,
 	errorMessage: string,
@@ -230,71 +378,24 @@ export class Runner {
 
 		if (isCancelled?.()) return { response: "", warnings: [] };
 
-		const images = await this.fetchImages(message);
+		const mediaDir = join(tmpdir(), "pion-media", context.contextKey.replace(/[:/\\]/g, "-"));
+		const savedAttachments = await materializeMediaAttachments(message, mediaDir);
 
 		if (isCancelled?.()) return { response: "", warnings: [] };
 
-		const response = await session.prompt(message.text, images, onMessage, isCancelled);
+		const response = await session.prompt(
+			buildPromptTextWithMediaPaths(message.text, savedAttachments),
+			undefined,
+			onMessage,
+			isCancelled,
+		);
+
+		if (isCancelled?.()) return { response: "", warnings: [] };
 
 		// Check for context warnings
 		const warnings = this.checkContextWarnings(context.contextKey, session);
 
 		return { response, warnings };
-	}
-
-	/**
-	 * Fetch and convert media attachments to base64 images.
-	 */
-	private async fetchImages(
-		message: Message,
-	): Promise<Array<{ type: "image"; data: string; mimeType: string }>> {
-		const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
-
-		if (!message.media || message.media.length === 0) {
-			return images;
-		}
-
-		for (const media of message.media) {
-			// Only process images
-			if (media.type !== "image") continue;
-
-			try {
-				let base64Data: string;
-				let mimeType = media.mimeType || "image/jpeg";
-
-				if (media.buffer) {
-					// Already have buffer
-					base64Data = media.buffer.toString("base64");
-				} else if (media.url) {
-					// Fetch from URL
-					const response = await fetch(media.url);
-					if (!response.ok) {
-						console.warn(`[runner] Failed to fetch image: ${response.status}`);
-						continue;
-					}
-					const buffer = await response.arrayBuffer();
-					base64Data = Buffer.from(buffer).toString("base64");
-
-					// Try to get mime type from response
-					const contentType = response.headers.get("content-type");
-					if (contentType) {
-						mimeType = contentType.split(";")[0] || mimeType;
-					}
-				} else {
-					continue;
-				}
-
-				images.push({
-					type: "image",
-					data: base64Data,
-					mimeType,
-				});
-			} catch (err) {
-				console.warn("[runner] Failed to process image:", err instanceof Error ? err.message : err);
-			}
-		}
-
-		return images;
 	}
 
 	/**
@@ -515,6 +616,7 @@ class RunnerSession {
 	private config: RunnerSessionConfig;
 	private initialized = false;
 	private agentSession: Awaited<ReturnType<typeof createAgentSession>>["session"] | null = null;
+	private sessionManager: SessionManager | null = null;
 
 	constructor(config: RunnerSessionConfig) {
 		this.config = config;
@@ -644,6 +746,9 @@ class RunnerSession {
 				}
 
 				const errorMessage = error instanceof Error ? error.message : String(error);
+				if (disposition.dropImages) {
+					this.rewindFailedTurnForRetry();
+				}
 				this.agentSession.agent.setSystemPrompt(
 					buildRuntimeErrorSystemPrompt(
 						freshSystemPrompt,
@@ -655,12 +760,29 @@ class RunnerSession {
 					messagePrefix + text,
 					disposition.dropImages ? undefined : images ? { images } : undefined,
 				);
+				this.agentSession.agent.setSystemPrompt(freshSystemPrompt);
 			}
 
 			return textBlocks.join("\n\n");
 		} finally {
 			unsubscribe();
 		}
+	}
+
+	private rewindFailedTurnForRetry(): void {
+		if (!this.agentSession || !this.sessionManager) {
+			return;
+		}
+		const branchParentId = findRetryBranchParentId(this.sessionManager.getBranch());
+		if (branchParentId === undefined) {
+			return;
+		}
+		if (branchParentId === null) {
+			this.sessionManager.resetLeaf();
+		} else {
+			this.sessionManager.branch(branchParentId);
+		}
+		this.agentSession.agent.state.messages = this.sessionManager.buildSessionContext().messages;
 	}
 
 	private async initialize(): Promise<void> {
@@ -682,6 +804,7 @@ class RunnerSession {
 
 		// Create session manager pointing to our session file
 		const sessionManager = SessionManager.open(this.config.sessionFile);
+		this.sessionManager = sessionManager;
 
 		// Build system prompt from workspace files
 		const systemPrompt = buildSystemPromptWithSkills(
@@ -705,5 +828,4 @@ class RunnerSession {
 		this.agentSession = result.session;
 		this.initialized = true;
 	}
-
 }

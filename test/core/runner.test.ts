@@ -2,11 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-	buildRuntimeErrorSystemPrompt,
-	classifyRuntimeError,
-	parseModelString,
 	Runner,
 	UserFacingError,
+	buildPromptTextWithMediaPaths,
+	buildRuntimeErrorSystemPrompt,
+	classifyRuntimeError,
+	findRetryBranchParentId,
+	materializeMediaAttachments,
+	parseModelString,
+	resolveFetchedImageMimeType,
 } from "../../src/core/runner.js";
 
 describe("Runner", () => {
@@ -265,7 +269,7 @@ describe("Runner", () => {
 			writeFileSync(join(workspaceDir, "IDENTITY.md"), "test agent\n");
 			writeFileSync(
 				join(workspaceDir, "models.json"),
-				JSON.stringify(
+				`${JSON.stringify(
 					{
 						providers: {
 							"test-provider": {
@@ -287,11 +291,11 @@ describe("Runner", () => {
 					},
 					null,
 					2,
-				) + "\n",
+				)}\n`,
 			);
 			writeFileSync(
 				join(testDir, "auth.json"),
-				JSON.stringify(
+				`${JSON.stringify(
 					{
 						"test-provider": {
 							type: "api_key",
@@ -300,7 +304,7 @@ describe("Runner", () => {
 					},
 					null,
 					2,
-				) + "\n",
+				)}\n`,
 			);
 
 			const isolatedRunner = new Runner({
@@ -308,7 +312,28 @@ describe("Runner", () => {
 				authPath: join(testDir, "auth.json"),
 			});
 
-			const session = await (isolatedRunner as any).createSession({
+			type TestRunnerSession = {
+				initialize(): Promise<void>;
+				agentSession: {
+					modelRegistry: {
+						find(provider: string, modelId: string): unknown;
+						hasConfiguredAuth(model: unknown): boolean;
+					};
+				};
+				config: {
+					modelRegistry: unknown;
+				};
+			};
+			const createSession = (
+				isolatedRunner as unknown as {
+					createSession(context: {
+						contextKey: string;
+						agentConfig: { model: string; workspace: string; skills: string[] };
+					}): Promise<TestRunnerSession>;
+				}
+			).createSession.bind(isolatedRunner);
+
+			const session = await createSession({
 				contextKey: "telegram:contact:user-1",
 				agentConfig: {
 					model: "test-provider/demo-model",
@@ -321,21 +346,62 @@ describe("Runner", () => {
 
 			expect(session.agentSession).toBeDefined();
 			expect(session.agentSession.modelRegistry).toBe(session.config.modelRegistry);
-			expect(session.agentSession.modelRegistry.find("test-provider", "demo-model")).toBeDefined();
-			expect(session.agentSession.modelRegistry.hasConfiguredAuth({
-				provider: "test-provider",
-				id: "demo-model",
-			} as any)).toBe(true);
+			const model = session.agentSession.modelRegistry.find("test-provider", "demo-model");
+			expect(model).toBeDefined();
+			expect(session.agentSession.modelRegistry.hasConfiguredAuth(model)).toBe(true);
+		});
+	});
+
+	describe("incoming media handling", () => {
+		test("saves image attachments to disk and references the saved path in prompt text", async () => {
+			const mediaDir = join(testDir, "media");
+			const attachments = await materializeMediaAttachments(
+				{
+					id: "msg-1",
+					chatId: "chat-1",
+					senderId: "user-1",
+					text: "[image]",
+					isGroup: false,
+					provider: "telegram",
+					timestamp: new Date("2026-04-02T15:00:00Z"),
+					raw: {},
+					media: [
+						{ type: "image", buffer: Buffer.from("fake image bytes"), mimeType: "image/png" },
+					],
+				},
+				mediaDir,
+			);
+
+			expect(attachments).toHaveLength(1);
+			expect(attachments[0]?.type).toBe("image");
+			expect(attachments[0]?.path.endsWith(".png")).toBe(true);
+			expect(existsSync(attachments[0]?.path || "")).toBe(true);
+			expect(buildPromptTextWithMediaPaths("[image]", attachments)).toBe(
+				`[User attached image: ${attachments[0]?.path}]`,
+			);
+		});
+
+		test("keeps user text and appends one line per saved attachment path", () => {
+			const prompt = buildPromptTextWithMediaPaths("look at these", [
+				{ type: "image", path: "/tmp/one.jpg" },
+				{ type: "image", path: "/tmp/two.png" },
+			]);
+
+			expect(prompt).toBe(
+				"look at these\n\n[User attached image: /tmp/one.jpg]\n[User attached image: /tmp/two.png]",
+			);
 		});
 	});
 
 	describe("runtime error recovery", () => {
 		test("classifies unsupported image errors as retryable with hidden note", () => {
 			const error = new Error(
-				"400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.228.content.1.image.source.base64.media_type: Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'\"}}",
+				'400 {"type":"error","error":{"type":"invalid_request_error","message":"messages.228.content.1.image.source.base64.media_type: Input should be \'image/jpeg\', \'image/png\', \'image/gif\' or \'image/webp\'"}}',
 			);
 
-			expect(classifyRuntimeError(error, [{ type: "image", data: "x", mimeType: "image/heic" }])).toEqual({
+			expect(
+				classifyRuntimeError(error, [{ type: "image", data: "x", mimeType: "image/heic" }]),
+			).toEqual({
 				kind: "retry-with-runtime-note",
 				dropImages: true,
 				additionalGuidance:
@@ -368,7 +434,9 @@ describe("Runner", () => {
 		});
 
 		test("leaves unknown errors alone", () => {
-			expect(classifyRuntimeError(new Error("weird unknown thing"), [])).toEqual({ kind: "rethrow" });
+			expect(classifyRuntimeError(new Error("weird unknown thing"), [])).toEqual({
+				kind: "rethrow",
+			});
 		});
 
 		test("builds a hidden runtime system prompt", () => {
@@ -381,6 +449,84 @@ describe("Runner", () => {
 			expect(prompt).toContain("unsupported image format");
 			expect(prompt).toContain("This note is from the runtime and is not visible to the user");
 			expect(prompt).toContain("Retrying without images.");
+		});
+
+		test("keeps known image mime type when fetch only reports octet-stream", () => {
+			expect(resolveFetchedImageMimeType("image/jpeg", "application/octet-stream")).toBe(
+				"image/jpeg",
+			);
+		});
+
+		test("uses fetched content type when it is a supported image mime", () => {
+			expect(resolveFetchedImageMimeType("image/jpeg", "image/webp; charset=binary")).toBe(
+				"image/webp",
+			);
+			expect(resolveFetchedImageMimeType(undefined, "image/png")).toBe("image/png");
+		});
+
+		test("finds the branch point before a failed user image turn", () => {
+			const branchEntries: Parameters<typeof findRetryBranchParentId>[0] = [
+				{
+					type: "message",
+					id: "assistant-ok",
+					parentId: null,
+					message: {
+						role: "assistant",
+						content: [{ type: "text", text: "ok" }],
+						stopReason: "stop",
+					},
+				},
+				{
+					type: "message",
+					id: "user-image",
+					parentId: "assistant-ok",
+					message: {
+						role: "user",
+						content: [
+							{ type: "text", text: "what is this?" },
+							{ type: "image", mimeType: "application/octet-stream", data: "..." },
+						],
+					},
+				},
+				{
+					type: "message",
+					id: "assistant-error",
+					parentId: "user-image",
+					message: {
+						role: "assistant",
+						content: [],
+						stopReason: "error",
+						errorMessage: "invalid_request_error: unsupported image mime",
+					},
+				},
+			];
+			expect(findRetryBranchParentId(branchEntries)).toBe("assistant-ok");
+		});
+
+		test("returns null branch point when the failed turn started at the root", () => {
+			const branchEntries: Parameters<typeof findRetryBranchParentId>[0] = [
+				{
+					type: "message",
+					id: "user-image",
+					parentId: null,
+					message: {
+						role: "user",
+						content: [{ type: "image", mimeType: "application/octet-stream", data: "..." }],
+					},
+				},
+				{
+					type: "message",
+					id: "assistant-error",
+					parentId: "user-image",
+					message: {
+						role: "assistant",
+						content: [],
+						stopReason: "error",
+						errorMessage: "bad image",
+					},
+				},
+			];
+			expect(findRetryBranchParentId(branchEntries)).toBeNull();
 		});
 
 		test("user-facing errors preserve a direct fallback message", () => {
@@ -398,10 +544,7 @@ describe("Runner", () => {
 		});
 
 		test("defaults to anthropic when provider prefix is missing", () => {
-			expect(parseModelString("claude-opus-4-6")).toEqual([
-				"anthropic",
-				"claude-opus-4-6",
-			]);
+			expect(parseModelString("claude-opus-4-6")).toEqual(["anthropic", "claude-opus-4-6"]);
 		});
 	});
 });
