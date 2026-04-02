@@ -90,6 +90,17 @@ describe("Daemon components", () => {
 			expect(result).toEqual({ command: "stop", args: "" });
 		});
 
+		test("/settings command is parsed correctly", () => {
+			const result = commands.parse("/settings");
+			expect(result).toEqual({ command: "settings", args: "" });
+		});
+
+		test("native settings keyboard labels are parsed correctly", () => {
+			expect(commands.parse("🆕 new session")).toEqual({ command: "new", args: "" });
+			expect(commands.parse("🧠 compact")).toEqual({ command: "compact", args: "" });
+			expect(commands.parse("⏹ stop")).toEqual({ command: "stop", args: "" });
+		});
+
 		test("regular messages are not commands", () => {
 			expect(commands.parse("hello")).toBeNull();
 			expect(commands.parse("what is new?")).toBeNull();

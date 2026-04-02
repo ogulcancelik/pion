@@ -318,7 +318,11 @@ export class TelegramProvider implements Provider {
 			{ command: "stop", description: "stop the current run" },
 			{ command: "new", description: "clear the session and start fresh" },
 			{ command: "compact", description: "summarize and continue in a fresh session" },
+			{ command: "settings", description: "show runner controls and context info" },
 		]);
+		await this.bot.api.setChatMenuButton({
+			menu_button: { type: "commands" },
+		});
 
 		// Start polling
 		this.bot.start({
@@ -382,11 +386,37 @@ export class TelegramProvider implements Provider {
 		await this.bot.api.deleteMessage(handle.chatId, Number(handle.messageId));
 	}
 
+	async sendControlMenu(options: {
+		chatId: string;
+		text: string;
+		buttons: string[][];
+		replyTo?: string;
+	}): Promise<SendResult> {
+		return this.sendTextMessage(
+			options.chatId,
+			options.text,
+			options.replyTo,
+			{
+				keyboard: options.buttons.map((row) => row.map((text) => ({ text }))),
+				resize_keyboard: true,
+				one_time_keyboard: true,
+				is_persistent: false,
+			},
+		);
+	}
+
 	private async sendTextMessage(
 		chatId: string,
 		text: string,
 		replyTo?: string,
-		replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
+		replyMarkup?:
+			| { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> }
+			| {
+					keyboard: Array<Array<{ text: string }>>;
+					resize_keyboard?: boolean;
+					one_time_keyboard?: boolean;
+					is_persistent?: boolean;
+			  },
 	): Promise<SendResult> {
 		const htmlText = markdownToTelegramHtml(text);
 

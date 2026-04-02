@@ -37,9 +37,21 @@ describe("Commands", () => {
 			expect(result).toEqual({ command: "compact", args: "but focus on last work on router" });
 		});
 
+		test("parses /settings command", () => {
+			const result = commands.parse("/settings");
+			expect(result).toEqual({ command: "settings", args: "" });
+		});
+
 		test("is case insensitive", () => {
 			expect(commands.parse("/NEW")).toEqual({ command: "new", args: "" });
 			expect(commands.parse("/Compact")).toEqual({ command: "compact", args: "" });
+			expect(commands.parse("/Settings")).toEqual({ command: "settings", args: "" });
+		});
+
+		test("recognizes native settings keyboard labels", () => {
+			expect(commands.parse("🆕 new session")).toEqual({ command: "new", args: "" });
+			expect(commands.parse("🧠 compact")).toEqual({ command: "compact", args: "" });
+			expect(commands.parse("⏹ stop")).toEqual({ command: "stop", args: "" });
 		});
 
 		test("ignores unknown commands", () => {

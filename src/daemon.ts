@@ -230,7 +230,17 @@ class Daemon {
 			console.log(`   → Cancelled ${cancelledMessages.length} buffered message(s)`);
 		}
 
-		await this.handleCommand(cmd, route.contextKey, action.chatId, provider, cancelledMessages.length);
+		await this.handleCommand(
+			cmd,
+			{
+				contextKey: route.contextKey,
+				chatId: action.chatId,
+				provider,
+				agentName: route.agentName,
+				agent: route.agent,
+			},
+			cancelledMessages.length,
+		);
 	}
 
 	private async handleMessage(message: Message): Promise<void> {
@@ -265,9 +275,13 @@ class Daemon {
 			}
 			await this.handleCommand(
 				cmd,
-				route.contextKey,
-				message.chatId,
-				provider,
+				{
+					contextKey: route.contextKey,
+					chatId: message.chatId,
+					provider,
+					agentName: route.agentName,
+					agent: route.agent,
+				},
 				cancelledMessages.length,
 			);
 			return;
@@ -612,11 +626,16 @@ class Daemon {
 
 	private async handleCommand(
 		cmd: { command: string; args: string },
-		contextKey: string,
-		chatId: string,
-		provider: Provider,
+		context: {
+			contextKey: string;
+			chatId: string;
+			provider: Provider;
+			agentName: string | null;
+			agent: Config["agents"][string] | null;
+		},
 		cancelledCount = 0,
 	): Promise<void> {
+		const { contextKey, chatId, provider, agentName, agent } = context;
 		try {
 			switch (cmd.command) {
 				case "new": {
@@ -673,6 +692,36 @@ class Daemon {
 						text: `✓ Session compacted.\n\n<b>Summary preserved:</b>\n${summary}`,
 					});
 					console.log("   ✓ Session compacted");
+					break;
+				}
+
+				case "settings": {
+					const sessionFile = this.runner.getSessionFile(contextKey);
+					const hasSession = existsSync(sessionFile);
+					const isBusy = this.runner.isStreaming(contextKey) || this.processingContexts.has(contextKey);
+					const status = isBusy ? "⚙️ processing" : hasSession ? "💬 session active" : "🆕 no session yet";
+					const settingsText = [
+						"**Runner controls**",
+						"",
+						`status: ${status}`,
+						`agent: \`${agentName ?? "none"}\``,
+						`model: \`${agent?.model ?? "n/a"}\``,
+						`context: \`${contextKey}\``,
+					].join("\n");
+
+					if (provider.type === "telegram" && this.telegramProvider) {
+						await this.telegramProvider.sendControlMenu({
+							chatId,
+							text: settingsText,
+							buttons: [["🆕 new session", "🧠 compact"], ["⏹ stop"]],
+						});
+					} else {
+						await provider.send({
+							chatId,
+							text: `${settingsText}\n\nAvailable controls: /new, /compact, /stop`,
+						});
+					}
+					console.log("   ✓ Settings shown");
 					break;
 				}
 

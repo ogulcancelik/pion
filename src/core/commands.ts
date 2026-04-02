@@ -10,7 +10,7 @@ import type { ActionMessage } from "../providers/types.js";
  */
 
 export interface CommandMatch {
-	command: "new" | "compact" | "stop";
+	command: "new" | "compact" | "stop" | "settings";
 	args: string;
 }
 
@@ -20,7 +20,7 @@ export interface CommandResult {
 	response?: string;
 }
 
-const KNOWN_COMMANDS = ["new", "compact", "stop"] as const;
+const KNOWN_COMMANDS = ["new", "compact", "stop", "settings"] as const;
 
 /**
  * Parse and handle chat commands.
@@ -32,6 +32,18 @@ export class Commands {
 	 */
 	parse(text: string): CommandMatch | null {
 		const trimmed = text.trim();
+		const nativeButtonCommands: Record<string, CommandMatch["command"]> = {
+			"🆕 new session": "new",
+			"🧠 compact": "compact",
+			"⏹ stop": "stop",
+		};
+		const nativeButtonCommand = nativeButtonCommands[trimmed];
+		if (nativeButtonCommand) {
+			return {
+				command: nativeButtonCommand,
+				args: "",
+			};
+		}
 
 		// Must start with /
 		if (!trimmed.startsWith("/")) {

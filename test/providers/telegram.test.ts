@@ -14,6 +14,7 @@ describe("TelegramProvider", () => {
 			}),
 			editMessageText: async () => true,
 			deleteMessage: async () => true,
+			setChatMenuButton: async () => true,
 		};
 		(provider as any).bot = { api };
 		return { provider, api };
@@ -220,14 +221,18 @@ describe("TelegramProvider", () => {
 		});
 	});
 
-	test("start registers telegram bot commands for the input menu", async () => {
+	test("start registers telegram bot commands and configures the command menu button", async () => {
 		const provider = new TelegramProvider({ botToken: "test-token" });
-		const calls: any[] = [];
+		const commandCalls: any[] = [];
+		const menuButtonCalls: any[] = [];
 		(provider as any).bot = {
 			api: {
 				getMe: async () => ({ username: "piontestbot" }),
 				setMyCommands: async (...args: any[]) => {
-					calls.push(args);
+					commandCalls.push(args);
+				},
+				setChatMenuButton: async (...args: any[]) => {
+					menuButtonCalls.push(args);
 				},
 			},
 			start: ({ onStart }: { onStart?: () => void }) => {
@@ -238,15 +243,52 @@ describe("TelegramProvider", () => {
 
 		await provider.start();
 
-		expect(calls).toEqual([
+		expect(commandCalls).toEqual([
 			[
 				[
 					{ command: "stop", description: "stop the current run" },
 					{ command: "new", description: "clear the session and start fresh" },
 					{ command: "compact", description: "summarize and continue in a fresh session" },
+					{ command: "settings", description: "show runner controls and context info" },
 				],
 			],
 		]);
+		expect(menuButtonCalls).toEqual([[{ menu_button: { type: "commands" } }]]);
+	});
+
+	test("sendControlMenu sends a native reply keyboard with runner controls", async () => {
+		const { provider, api } = createProvider();
+		let sendArgs: any[] | undefined;
+		api.sendMessage = async (...args: any[]) => {
+			sendArgs = args;
+			return {
+				message_id: 77,
+				chat: { id: 123 },
+			};
+		};
+
+		const result = await provider.sendControlMenu?.({
+			chatId: "123",
+			text: "runner controls",
+			buttons: [["🆕 new session", "🧠 compact"], ["⏹ stop"]],
+		});
+
+		expect(sendArgs?.[0]).toBe("123");
+		expect(sendArgs?.[1]).toContain("runner controls");
+		expect(sendArgs?.[2]).toEqual({
+			parse_mode: "HTML",
+			reply_markup: {
+				keyboard: [[{ text: "🆕 new session" }, { text: "🧠 compact" }], [{ text: "⏹ stop" }]],
+				resize_keyboard: true,
+				one_time_keyboard: true,
+				is_persistent: false,
+			},
+			reply_to_message_id: undefined,
+		});
+		expect(result).toEqual({
+			messageId: "77",
+			chatId: "123",
+		});
 	});
 });
 
