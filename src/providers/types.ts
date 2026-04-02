@@ -45,6 +45,24 @@ export interface SendResult {
 	chatId: string;
 }
 
+export interface StatusHandle {
+	provider: ProviderType;
+	chatId: string;
+	messageId: string;
+}
+
+export interface StatusAction {
+	id: string;
+	label: string;
+}
+
+export interface StatusUpdate {
+	chatId: string;
+	text: string;
+	handle?: StatusHandle;
+	actions?: StatusAction[];
+}
+
 /**
  * Provider interface - implemented by Telegram, WhatsApp, etc.
  */
@@ -62,6 +80,12 @@ export interface Provider {
 
 	/** Send typing indicator */
 	sendTyping?(chatId: string): Promise<void>;
+
+	/** Create or update an editable provider-native status message */
+	upsertStatus?(status: StatusUpdate): Promise<StatusHandle>;
+
+	/** Remove a previously created editable status message */
+	clearStatus?(handle: StatusHandle): Promise<void>;
 
 	/** Register handler for incoming messages */
 	onMessage(handler: (message: Message) => void | Promise<void>): void;

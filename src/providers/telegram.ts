@@ -3,7 +3,15 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { Bot, InputFile } from "grammy";
 import { markdownToTelegramHtml } from "./telegram-format.js";
-import type { MediaAttachment, Message, OutboundMessage, Provider, SendResult } from "./types.js";
+import type {
+	MediaAttachment,
+	Message,
+	OutboundMessage,
+	Provider,
+	SendResult,
+	StatusHandle,
+	StatusUpdate,
+} from "./types.js";
 
 export interface TelegramProviderConfig {
 	botToken: string;
@@ -279,13 +287,49 @@ export class TelegramProvider implements Provider {
 			return this.sendAsDocument(chatId, message.text, message.replyTo);
 		}
 
-		const htmlText = markdownToTelegramHtml(message.text);
+		return this.sendTextMessage(chatId, message.text, message.replyTo);
+	}
 
-		// TODO: Handle media attachments
+	async upsertStatus(status: StatusUpdate): Promise<StatusHandle> {
+		const htmlText = markdownToTelegramHtml(status.text);
+		const replyMarkup = undefined;
+
+		if (status.handle) {
+			await this.bot.api.editMessageText(
+				status.chatId,
+				Number(status.handle.messageId),
+				htmlText,
+				{
+					parse_mode: "HTML",
+					reply_markup: replyMarkup,
+				},
+			);
+			return status.handle;
+		}
+
+		const sent = await this.sendTextMessage(status.chatId, status.text);
+		return {
+			provider: "telegram",
+			chatId: sent.chatId,
+			messageId: sent.messageId,
+		};
+	}
+
+	async clearStatus(handle: StatusHandle): Promise<void> {
+		await this.bot.api.deleteMessage(handle.chatId, Number(handle.messageId));
+	}
+
+	private async sendTextMessage(
+		chatId: string,
+		text: string,
+		replyTo?: string,
+	): Promise<SendResult> {
+		const htmlText = markdownToTelegramHtml(text);
+
 		try {
 			const result = await this.bot.api.sendMessage(chatId, htmlText, {
 				parse_mode: "HTML",
-				reply_to_message_id: message.replyTo ? Number(message.replyTo) : undefined,
+				reply_to_message_id: replyTo ? Number(replyTo) : undefined,
 			});
 
 			return {
@@ -293,12 +337,11 @@ export class TelegramProvider implements Provider {
 				chatId: String(result.chat.id),
 			};
 		} catch (error) {
-			// If HTML parsing fails, fall back to plain text
 			const errMsg = error instanceof Error ? error.message : "";
 			if (errMsg.includes("parse") || errMsg.includes("entities")) {
 				console.warn("[telegram] HTML parse failed, falling back to plain text");
-				const result = await this.bot.api.sendMessage(chatId, message.text, {
-					reply_to_message_id: message.replyTo ? Number(message.replyTo) : undefined,
+				const result = await this.bot.api.sendMessage(chatId, text, {
+					reply_to_message_id: replyTo ? Number(replyTo) : undefined,
 				});
 				return {
 					messageId: String(result.message_id),
