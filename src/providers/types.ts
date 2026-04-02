@@ -16,6 +16,20 @@ export interface Message {
 	raw: unknown;
 }
 
+export interface ActionMessage {
+	id: string;
+	chatId: string;
+	senderId: string;
+	senderName?: string;
+	provider: ProviderType;
+	timestamp: Date;
+	isGroup: boolean;
+	actionId: string;
+	messageId?: string;
+	data?: string;
+	raw: unknown;
+}
+
 export type ProviderType = "telegram" | "whatsapp";
 
 export interface MediaAttachment {
@@ -89,6 +103,9 @@ export interface Provider {
 
 	/** Register handler for incoming messages */
 	onMessage(handler: (message: Message) => void | Promise<void>): void;
+
+	/** Register handler for incoming button/callback actions */
+	onAction?(handler: (action: ActionMessage) => void | Promise<void>): void;
 
 	/** Check if provider is connected */
 	isConnected(): boolean;

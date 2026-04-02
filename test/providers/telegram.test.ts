@@ -102,6 +102,100 @@ describe("TelegramProvider", () => {
 
 		expect(deleteArgs).toEqual(["123", 42]);
 	});
+
+	test("upsertStatus includes inline keyboard actions when sending a new status", async () => {
+		const { provider, api } = createProvider();
+		let sendArgs: any[] | undefined;
+		api.sendMessage = async (...args: any[]) => {
+			sendArgs = args;
+			return {
+				message_id: 42,
+				chat: { id: 123 },
+			};
+		};
+
+		await provider.upsertStatus?.({
+			chatId: "123",
+			text: "⚙️ working",
+			actions: [
+				{ id: "stop", label: "⏹ stop" },
+				{ id: "compact", label: "🧠 compact" },
+			],
+		});
+
+		expect(sendArgs?.[2]).toEqual({
+			parse_mode: "HTML",
+			reply_markup: {
+				inline_keyboard: [
+					[{ text: "⏹ stop", callback_data: "stop" }],
+					[{ text: "🧠 compact", callback_data: "compact" }],
+				],
+			},
+			reply_to_message_id: undefined,
+		});
+	});
+
+	test("upsertStatus includes inline keyboard actions when editing an existing status", async () => {
+		const { provider, api } = createProvider();
+		let editArgs: any[] | undefined;
+		api.editMessageText = async (...args: any[]) => {
+			editArgs = args;
+			return true;
+		};
+
+		await provider.upsertStatus?.({
+			chatId: "123",
+			handle: {
+				provider: "telegram",
+				chatId: "123",
+				messageId: "42",
+			},
+			text: "updated status",
+			actions: [{ id: "new", label: "🆕 new" }],
+		});
+
+		expect(editArgs?.[3]).toEqual({
+			parse_mode: "HTML",
+			reply_markup: {
+				inline_keyboard: [[{ text: "🆕 new", callback_data: "new" }]],
+			},
+		});
+	});
+
+	test("normalizes callback queries into action events", async () => {
+		const provider = new TelegramProvider({ botToken: "test-token" });
+		const actions: any[] = [];
+		provider.onAction?.((action) => {
+			actions.push(action);
+		});
+
+		(provider as any).dispatchAction({
+			id: "cbq-1",
+			from: { id: 7, first_name: "Can", username: "can" },
+			data: "stop",
+			message: {
+				message_id: 42,
+				date: 1712091600,
+				chat: { id: 123, type: "private" },
+			},
+		});
+
+		expect(actions).toEqual([
+			{
+				id: "cbq-1",
+				chatId: "123",
+				senderId: "7",
+				senderName: "Can",
+				provider: "telegram",
+				timestamp: new Date(1712091600 * 1000),
+				isGroup: false,
+				actionId: "stop",
+				messageId: "42",
+				data: "stop",
+				raw: expect.any(Object),
+			},
+			]);
+	});
 });
 
 // Integration test - only runs with real token

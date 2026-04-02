@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { type ActionMessage } from "../../src/providers/types.js";
 import { type CommandMatch, Commands } from "../../src/core/commands.js";
 
 describe("Commands", () => {
@@ -44,6 +45,41 @@ describe("Commands", () => {
 		test("ignores unknown commands", () => {
 			expect(commands.parse("/unknown")).toBeNull();
 			expect(commands.parse("/help")).toBeNull();
+		});
+	});
+
+	describe("fromAction", () => {
+		function makeAction(actionId: string): ActionMessage {
+			return {
+				id: "action-1",
+				chatId: "chat-1",
+				senderId: "user-1",
+				provider: "telegram",
+				timestamp: new Date("2026-04-02T22:00:00.000Z"),
+				isGroup: false,
+				actionId,
+				raw: {},
+			};
+		}
+
+		test("maps stop action to stop command", () => {
+			expect(commands.fromAction(makeAction("stop"))).toEqual({ command: "stop", args: "" });
+		});
+
+		test("maps new action to new command", () => {
+			expect(commands.fromAction(makeAction("new"))).toEqual({ command: "new", args: "" });
+		});
+
+		test("maps compact action to compact command", () => {
+			expect(commands.fromAction(makeAction("compact"))).toEqual({
+				command: "compact",
+				args: "",
+			});
+		});
+
+		test("ignores unsupported action ids", () => {
+			expect(commands.fromAction(makeAction("inspect"))).toBeNull();
+			expect(commands.fromAction(makeAction("weird"))).toBeNull();
 		});
 	});
 });

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { Config } from "../../src/config/schema.js";
 import { Router } from "../../src/core/router.js";
-import type { Message } from "../../src/providers/types.js";
+import type { ActionMessage, Message } from "../../src/providers/types.js";
 
 const makeMessage = (overrides: Partial<Message> = {}): Message => ({
 	id: "msg-1",
@@ -150,5 +150,26 @@ describe("Router", () => {
 
 		expect(result.agent).toBeNull();
 		expect(result.agentName).toBeNull();
+	});
+
+	test("routes actions using the same context logic as messages", () => {
+		const config = makeConfig({
+			routes: [{ match: { type: "dm" }, agent: "main", isolation: "per-contact" }],
+		});
+		const router = new Router(config);
+		const action: ActionMessage = {
+			id: "action-1",
+			chatId: "chat-123",
+			senderId: "+1234567890",
+			provider: "telegram",
+			timestamp: new Date(),
+			isGroup: false,
+			actionId: "stop",
+			raw: {},
+		};
+
+		const result = router.routeAction(action);
+		expect(result.agentName).toBe("main");
+		expect(result.contextKey).toBe("telegram:contact:+1234567890");
 	});
 });

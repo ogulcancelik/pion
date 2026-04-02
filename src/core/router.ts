@@ -1,5 +1,5 @@
 import type { AgentConfig, Config, IsolationMode, Route } from "../config/schema.js";
-import type { Message } from "../providers/types.js";
+import type { ActionMessage, Message } from "../providers/types.js";
 
 export interface RouteResult {
 	agent: AgentConfig | null;
@@ -20,6 +20,14 @@ export class Router {
 	 * Returns null agent if message should be ignored.
 	 */
 	route(message: Message): RouteResult {
+		return this.routeCommon(message);
+	}
+
+	routeAction(action: ActionMessage): RouteResult {
+		return this.routeCommon(action);
+	}
+
+	private routeCommon(message: Pick<ActionMessage, "provider" | "chatId" | "senderId" | "isGroup">): RouteResult {
 		for (const rule of this.config.routes) {
 			if (this.matches(rule, message)) {
 				const agentName = rule.agent;
@@ -44,7 +52,10 @@ export class Router {
 		};
 	}
 
-	private matches(rule: Route, message: Message): boolean {
+	private matches(
+		rule: Route,
+		message: Pick<ActionMessage, "chatId" | "senderId" | "isGroup">,
+	): boolean {
 		const match = rule.match;
 
 		if ("type" in match) {
@@ -69,7 +80,10 @@ export class Router {
 		return false;
 	}
 
-	private buildContextKey(message: Message, isolation: IsolationMode): string {
+	private buildContextKey(
+		message: Pick<ActionMessage, "provider" | "chatId" | "senderId">,
+		isolation: IsolationMode,
+	): string {
 		const prefix = message.provider;
 
 		switch (isolation) {

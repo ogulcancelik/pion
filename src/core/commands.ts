@@ -1,3 +1,5 @@
+import type { ActionMessage } from "../providers/types.js";
+
 /**
  * Command handling for pion.
  *
@@ -53,6 +55,17 @@ export class Commands {
 		return {
 			command: command as CommandMatch["command"],
 			args,
+		};
+	}
+
+	fromAction(action: ActionMessage): CommandMatch | null {
+		if (!KNOWN_COMMANDS.includes(action.actionId as (typeof KNOWN_COMMANDS)[number])) {
+			return null;
+		}
+
+		return {
+			command: action.actionId as CommandMatch["command"],
+			args: "",
 		};
 	}
 }

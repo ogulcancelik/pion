@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { Bot, InputFile } from "grammy";
 import { markdownToTelegramHtml } from "./telegram-format.js";
 import type {
+	ActionMessage,
 	MediaAttachment,
 	Message,
 	OutboundMessage,
@@ -20,11 +21,27 @@ export interface TelegramProviderConfig {
 /**
  * Telegram provider using Grammy.
  */
+function buildInlineKeyboard(actions?: StatusUpdate["actions"]) {
+	if (!actions || actions.length === 0) {
+		return undefined;
+	}
+
+	return {
+		inline_keyboard: actions.map((action) => [
+			{
+				text: action.label,
+				callback_data: action.id,
+			},
+		]),
+	};
+}
+
 export class TelegramProvider implements Provider {
 	readonly type = "telegram" as const;
 
 	private bot: Bot;
 	private messageHandler?: (message: Message) => void | Promise<void>;
+	private actionHandler?: (action: ActionMessage) => void | Promise<void>;
 	private connected = false;
 
 	constructor(private config: TelegramProviderConfig) {
@@ -39,7 +56,41 @@ export class TelegramProvider implements Provider {
 		});
 	}
 
+	private dispatchAction(callbackQuery: {
+		id: string;
+		from: { id: number | string; first_name?: string; username?: string };
+		data: string;
+		message?: {
+			message_id: number | string;
+			date: number;
+			chat: { id: number | string; type: string };
+		};
+	}): void {
+		if (!this.actionHandler || !callbackQuery.message) return;
+		const message = callbackQuery.message;
+		const action: ActionMessage = {
+			id: callbackQuery.id,
+			chatId: String(message.chat.id),
+			senderId: String(callbackQuery.from.id),
+			senderName: callbackQuery.from.first_name ?? callbackQuery.from.username,
+			provider: "telegram",
+			timestamp: new Date(message.date * 1000),
+			isGroup: message.chat.type === "group" || message.chat.type === "supergroup",
+			actionId: callbackQuery.data,
+			messageId: String(message.message_id),
+			data: callbackQuery.data,
+			raw: callbackQuery,
+		};
+		Promise.resolve(this.actionHandler(action)).catch((err: unknown) => {
+			console.error("[telegram] action handler error:", err);
+		});
+	}
+
 	private setupHandlers(): void {
+		this.bot.on("callback_query:data", async (ctx) => {
+			this.dispatchAction(ctx.callbackQuery);
+		});
+
 		// Handle text messages
 		this.bot.on("message:text", async (ctx) => {
 			if (!this.messageHandler) return;
@@ -292,7 +343,7 @@ export class TelegramProvider implements Provider {
 
 	async upsertStatus(status: StatusUpdate): Promise<StatusHandle> {
 		const htmlText = markdownToTelegramHtml(status.text);
-		const replyMarkup = undefined;
+		const replyMarkup = buildInlineKeyboard(status.actions);
 
 		if (status.handle) {
 			await this.bot.api.editMessageText(
@@ -307,7 +358,7 @@ export class TelegramProvider implements Provider {
 			return status.handle;
 		}
 
-		const sent = await this.sendTextMessage(status.chatId, status.text);
+		const sent = await this.sendTextMessage(status.chatId, status.text, undefined, replyMarkup);
 		return {
 			provider: "telegram",
 			chatId: sent.chatId,
@@ -323,12 +374,14 @@ export class TelegramProvider implements Provider {
 		chatId: string,
 		text: string,
 		replyTo?: string,
+		replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> },
 	): Promise<SendResult> {
 		const htmlText = markdownToTelegramHtml(text);
 
 		try {
 			const result = await this.bot.api.sendMessage(chatId, htmlText, {
 				parse_mode: "HTML",
+				reply_markup: replyMarkup,
 				reply_to_message_id: replyTo ? Number(replyTo) : undefined,
 			});
 
@@ -341,6 +394,7 @@ export class TelegramProvider implements Provider {
 			if (errMsg.includes("parse") || errMsg.includes("entities")) {
 				console.warn("[telegram] HTML parse failed, falling back to plain text");
 				const result = await this.bot.api.sendMessage(chatId, text, {
+					reply_markup: replyMarkup,
 					reply_to_message_id: replyTo ? Number(replyTo) : undefined,
 				});
 				return {
@@ -431,6 +485,10 @@ export class TelegramProvider implements Provider {
 
 	onMessage(handler: (message: Message) => void | Promise<void>): void {
 		this.messageHandler = handler;
+	}
+
+	onAction(handler: (action: ActionMessage) => void | Promise<void>): void {
+		this.actionHandler = handler;
 	}
 
 	isConnected(): boolean {

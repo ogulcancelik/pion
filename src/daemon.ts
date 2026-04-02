@@ -38,7 +38,7 @@ import { ensureWorkspace } from "./core/workspace.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
 import { TelegramProvider } from "./providers/telegram.js";
 import { TelegramStatusSink } from "./providers/telegram-status.js";
-import type { Message, Provider } from "./providers/types.js";
+import type { ActionMessage, Message, Provider } from "./providers/types.js";
 import { WhatsAppProvider } from "./providers/whatsapp.js";
 
 const DEFAULT_DEBOUNCE_MS = 5000;
@@ -137,6 +137,7 @@ class Daemon {
 				botToken: this.config.telegram.botToken,
 			});
 			telegram.onMessage((msg) => this.handleMessage(msg));
+			telegram.onAction?.((action) => this.handleAction(action));
 			await telegram.start();
 			this.providers.push(telegram);
 			this.telegramProvider = telegram;
@@ -200,6 +201,34 @@ class Daemon {
 
 		console.log(`\n✓ Daemon running with ${this.providers.length} provider(s)`);
 		console.log("  Press Ctrl+C to stop\n");
+	}
+
+	private async handleAction(action: ActionMessage): Promise<void> {
+		if (this.shuttingDown) return;
+
+		const provider = this.getProvider(action.provider);
+		if (!provider) return;
+
+		const cmd = this.commands.fromAction(action);
+		if (!cmd) {
+			console.log(`   → Ignored action: ${action.actionId}`);
+			return;
+		}
+
+		const route = this.router.routeAction(action);
+		if (!route.agent) {
+			console.log("   → Ignored action (no matching agent)");
+			return;
+		}
+
+		console.log(`   → Action: ${action.actionId}`);
+		const cancelledMessages = this.debouncer.cancel(route.contextKey);
+		if (cancelledMessages.length > 0) {
+			this.routeCache.delete(route.contextKey);
+			console.log(`   → Cancelled ${cancelledMessages.length} buffered message(s)`);
+		}
+
+		await this.handleCommand(cmd, route.contextKey, action.chatId, provider, cancelledMessages.length);
 	}
 
 	private async handleMessage(message: Message): Promise<void> {
