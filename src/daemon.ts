@@ -27,7 +27,7 @@ import {
 	dedupeRecoveryTargets,
 } from "./core/recovery.js";
 import { Router } from "./core/router.js";
-import { Runner } from "./core/runner.js";
+import { Runner, UserFacingError } from "./core/runner.js";
 import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-state.js";
 import { ensureWorkspace } from "./core/workspace.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
@@ -414,7 +414,10 @@ class Daemon {
 			// Send error message back
 			await provider.send({
 				chatId: message.chatId,
-				text: "Sorry, I encountered an error. Please try again.",
+				text:
+					error instanceof UserFacingError
+						? error.userMessage
+						: "Sorry, I encountered an error. Please try again.",
 				replyTo: message.id,
 			});
 		} finally {

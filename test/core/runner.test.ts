@@ -2,10 +2,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-	buildRetrySystemPrompt,
+	buildRuntimeErrorSystemPrompt,
+	classifyRuntimeError,
 	parseModelString,
 	Runner,
-	shouldRetryWithoutImages,
+	UserFacingError,
 } from "../../src/core/runner.js";
 
 describe("Runner", () => {
@@ -328,27 +329,63 @@ describe("Runner", () => {
 		});
 	});
 
-	describe("image error recovery", () => {
-		test("detects provider errors that should retry without images", () => {
+	describe("runtime error recovery", () => {
+		test("classifies unsupported image errors as retryable with hidden note", () => {
 			const error = new Error(
 				"400 {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"messages.228.content.1.image.source.base64.media_type: Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'\"}}",
 			);
 
-			expect(shouldRetryWithoutImages(error, [{ type: "image", data: "x", mimeType: "image/heic" }])).toBe(
-				true,
+			expect(classifyRuntimeError(error, [{ type: "image", data: "x", mimeType: "image/heic" }])).toEqual({
+				kind: "retry-with-runtime-note",
+				dropImages: true,
+				additionalGuidance:
+					"The retry is being sent without the attached images because the previous attempt failed while processing them.",
+			});
+		});
+
+		test("classifies auth errors as user-facing fallback", () => {
+			expect(classifyRuntimeError(new Error("No API key found for fireworks-ai."), [])).toEqual({
+				kind: "user-facing-fallback",
+				userMessage:
+					"I hit an upstream authentication/configuration problem and can't answer right now. Please try again later.",
+			});
+		});
+
+		test("classifies quota errors as user-facing fallback", () => {
+			expect(classifyRuntimeError(new Error("insufficient credits"), [])).toEqual({
+				kind: "user-facing-fallback",
+				userMessage:
+					"The upstream AI provider is currently rate-limited or out of quota, so I can't answer right now. Please try again later.",
+			});
+		});
+
+		test("classifies outages as user-facing fallback", () => {
+			expect(classifyRuntimeError(new Error("503 Service Unavailable"), [])).toEqual({
+				kind: "user-facing-fallback",
+				userMessage:
+					"The upstream AI provider is temporarily unavailable, so I can't answer right now. Please try again in a bit.",
+			});
+		});
+
+		test("leaves unknown errors alone", () => {
+			expect(classifyRuntimeError(new Error("weird unknown thing"), [])).toEqual({ kind: "rethrow" });
+		});
+
+		test("builds a hidden runtime system prompt", () => {
+			const prompt = buildRuntimeErrorSystemPrompt(
+				"base prompt",
+				"unsupported image format",
+				"Retrying without images.",
 			);
-		});
-
-		test("does not retry when there are no images", () => {
-			const error = new Error("image.source.base64.media_type: unsupported");
-			expect(shouldRetryWithoutImages(error, [])).toBe(false);
-		});
-
-		test("builds a system prompt that tells the agent what happened", () => {
-			const prompt = buildRetrySystemPrompt("base prompt", "unsupported image format");
 			expect(prompt).toContain("base prompt");
 			expect(prompt).toContain("unsupported image format");
-			expect(prompt).toContain("Continue without using the attached images");
+			expect(prompt).toContain("This note is from the runtime and is not visible to the user");
+			expect(prompt).toContain("Retrying without images.");
+		});
+
+		test("user-facing errors preserve a direct fallback message", () => {
+			const err = new UserFacingError("upstream auth failed", "human readable fallback");
+			expect(err.userMessage).toBe("human readable fallback");
 		});
 	});
 

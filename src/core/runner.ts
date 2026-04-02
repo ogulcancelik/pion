@@ -78,20 +78,103 @@ export function parseModelString(modelString: string): [string, string] {
 	return ["anthropic", modelString];
 }
 
-export function shouldRetryWithoutImages(
-	error: unknown,
-	images?: Array<{ type: "image"; data: string; mimeType: string }>,
-): boolean {
-	if (!images || images.length === 0) return false;
-	const message = error instanceof Error ? error.message : String(error);
-	return (
-		message.includes("image.source.base64.media_type") ||
-		message.includes("Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'")
-	);
+export class UserFacingError extends Error {
+	constructor(
+		message: string,
+		public readonly userMessage: string,
+	) {
+		super(message);
+		this.name = "UserFacingError";
+	}
 }
 
-export function buildRetrySystemPrompt(basePrompt: string, errorMessage: string): string {
-	return `${basePrompt}\n\n<System note>\nThe previous attempt to answer the user failed with this provider error:\n${errorMessage}\n\nContinue without using the attached images. Briefly explain to the user that the image format could not be processed and ask them to resend it as JPG, PNG, GIF, or WebP if needed.\n</System note>`;
+export type RuntimeErrorDisposition =
+	| {
+			kind: "retry-with-runtime-note";
+			additionalGuidance?: string;
+			dropImages?: boolean;
+	  }
+	| {
+			kind: "user-facing-fallback";
+			userMessage: string;
+	  }
+	| { kind: "rethrow" };
+
+export function classifyRuntimeError(
+	error: unknown,
+	images?: Array<{ type: "image"; data: string; mimeType: string }>,
+): RuntimeErrorDisposition {
+	const message = error instanceof Error ? error.message : String(error);
+	const normalized = message.toLowerCase();
+
+	const unsupportedImage =
+		!!images?.length &&
+		(message.includes("image.source.base64.media_type") ||
+			message.includes("Input should be 'image/jpeg', 'image/png', 'image/gif' or 'image/webp'"));
+	if (unsupportedImage) {
+		return {
+			kind: "retry-with-runtime-note",
+			dropImages: true,
+			additionalGuidance:
+				"The retry is being sent without the attached images because the previous attempt failed while processing them.",
+		};
+	}
+
+	if (
+		normalized.includes("no api key found") ||
+		normalized.includes("authentication failed") ||
+		normalized.includes("invalid api key") ||
+		normalized.includes("unauthorized") ||
+		normalized.includes("forbidden")
+	) {
+		return {
+			kind: "user-facing-fallback",
+			userMessage:
+				"I hit an upstream authentication/configuration problem and can't answer right now. Please try again later.",
+		};
+	}
+
+	if (
+		normalized.includes("rate limit") ||
+		normalized.includes("too many requests") ||
+		normalized.includes("credits") ||
+		normalized.includes("quota") ||
+		normalized.includes("insufficient")
+	) {
+		return {
+			kind: "user-facing-fallback",
+			userMessage:
+				"The upstream AI provider is currently rate-limited or out of quota, so I can't answer right now. Please try again later.",
+		};
+	}
+
+	if (
+		normalized.includes("overloaded") ||
+		normalized.includes("service unavailable") ||
+		normalized.includes("internal server error") ||
+		normalized.includes("bad gateway") ||
+		normalized.includes("gateway timeout") ||
+		normalized.includes("timed out") ||
+		normalized.includes("timeout") ||
+		normalized.includes("econnreset") ||
+		normalized.includes("network")
+	) {
+		return {
+			kind: "user-facing-fallback",
+			userMessage:
+				"The upstream AI provider is temporarily unavailable, so I can't answer right now. Please try again in a bit.",
+		};
+	}
+
+	return { kind: "rethrow" };
+}
+
+export function buildRuntimeErrorSystemPrompt(
+	basePrompt: string,
+	errorMessage: string,
+	additionalGuidance?: string,
+): string {
+	return `${basePrompt}\n\n<System note>\nThe previous attempt failed with this runtime/provider error:\n${errorMessage}\n\nThis note is from the runtime and is not visible to the user. Continue the conversation with this in mind.${additionalGuidance ? `\n\n${additionalGuidance}` : ""}\n</System note>`;
 }
 
 /**
@@ -551,15 +634,27 @@ class RunnerSession {
 			try {
 				await this.agentSession.prompt(messagePrefix + text, images ? { images } : undefined);
 			} catch (error) {
-				if (!shouldRetryWithoutImages(error, images)) {
+				const disposition = classifyRuntimeError(error, images);
+				if (disposition.kind === "rethrow") {
 					throw error;
+				}
+				if (disposition.kind === "user-facing-fallback") {
+					const errorMessage = error instanceof Error ? error.message : String(error);
+					throw new UserFacingError(errorMessage, disposition.userMessage);
 				}
 
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				this.agentSession.agent.setSystemPrompt(
-					buildRetrySystemPrompt(freshSystemPrompt, errorMessage),
+					buildRuntimeErrorSystemPrompt(
+						freshSystemPrompt,
+						errorMessage,
+						disposition.additionalGuidance,
+					),
 				);
-				await this.agentSession.prompt(messagePrefix + text);
+				await this.agentSession.prompt(
+					messagePrefix + text,
+					disposition.dropImages ? undefined : images ? { images } : undefined,
+				);
 			}
 
 			return textBlocks.join("\n\n");
