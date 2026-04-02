@@ -77,6 +77,10 @@ export class MessageDebouncer {
 		return !!buffer && buffer.length > 0;
 	}
 
+	getPendingCount(contextKey: string): number {
+		return this.buffers.get(contextKey)?.length ?? 0;
+	}
+
 	/**
 	 * Clear all buffers and timers. Call on shutdown.
 	 */
@@ -116,11 +120,11 @@ export function mergeMessages(messages: Message[]): Message {
 	}
 
 	if (messages.length === 1) {
-		return messages[0];
+		return messages[0]!;
 	}
 
-	const first = messages[0];
-	const last = messages[messages.length - 1];
+	const first = messages[0]!;
+	const last = messages[messages.length - 1]!;
 
 	return {
 		...first,

@@ -28,6 +28,11 @@ import {
 } from "./core/recovery.js";
 import { Router } from "./core/router.js";
 import { Runner, UserFacingError } from "./core/runner.js";
+import {
+	createMessageReceivedRuntimeEvent,
+	RuntimeEventBus,
+	type PionRuntimeEventInput,
+} from "./core/runtime-events.js";
 import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-state.js";
 import { ensureWorkspace } from "./core/workspace.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
@@ -46,6 +51,7 @@ class Daemon {
 	private debouncer: MessageDebouncer;
 	private debounceMs: number;
 	private runtimeState: DaemonRuntimeState;
+	private runtimeEvents: RuntimeEventBus;
 	private recoveryInfo: StartupRecoveryInfo | null = null;
 	private providers: Provider[] = [];
 	private telegramProvider: TelegramProvider | null = null;
@@ -73,10 +79,13 @@ class Daemon {
 		this.config = config;
 		this.debounceMs = config.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 		this.router = new Router(config);
+		const dataDir = config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
+		this.runtimeEvents = new RuntimeEventBus(dataDir);
 		this.runner = new Runner({
 			dataDir: config.dataDir,
 			skillsDir: config.skillsDir,
 			authPath: config.authPath,
+			runtimeEventBus: this.runtimeEvents,
 		});
 		this.commands = new Commands();
 		this.compactor = new Compactor({ authPath: config.authPath });
@@ -84,7 +93,6 @@ class Daemon {
 			timeoutMs: this.debounceMs,
 			onFlush: (contextKey, messages) => this.processMessages(contextKey, messages),
 		});
-		const dataDir = config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
 		this.runtimeState = new DaemonRuntimeState(dataDir);
 	}
 
@@ -98,6 +106,10 @@ class Daemon {
 	/** Check if a generation is still current (not superseded). */
 	private isCurrentGeneration(contextKey: string, gen: number): boolean {
 		return (this.contextGeneration.get(contextKey) ?? 0) === gen;
+	}
+
+	private emitRuntimeEvent(event: PionRuntimeEventInput): void {
+		this.runtimeEvents.emit(event);
 	}
 
 	async start(): Promise<void> {
@@ -197,6 +209,7 @@ class Daemon {
 
 		// Route the message (needed for contextKey even for commands)
 		const route = this.router.route(message);
+		this.emitRuntimeEvent(createMessageReceivedRuntimeEvent(route.contextKey, message));
 
 		if (!route.agent) {
 			console.log("   → Ignored (no matching agent)");
@@ -232,6 +245,12 @@ class Daemon {
 			this.processingContexts.has(route.contextKey)
 		) {
 			console.log("   → Superseding current response (new message received)");
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey: route.contextKey,
+				type: "runtime_superseded",
+				reason: "new_message",
+			});
 			this.nextGeneration(route.contextKey);
 			// Also try to abort the runner if it's streaming (best-effort)
 			await this.runner.abort(route.contextKey).catch(() => {});
@@ -256,6 +275,12 @@ class Daemon {
 		// within the debounce window will be merged. Acceptable tradeoff for now.
 		console.log(`   → Buffered (${route.agentName}, debounce ${this.debounceMs}ms)`);
 		this.debouncer.add(route.contextKey, message);
+		this.emitRuntimeEvent({
+			source: "pion",
+			contextKey: route.contextKey,
+			type: "runtime_message_buffered",
+			messageCount: this.debouncer.getPendingCount(route.contextKey),
+		});
 	}
 
 	/**
@@ -282,6 +307,13 @@ class Daemon {
 
 		if (messages.length > 1) {
 			console.log(`   📦 Merged ${messages.length} messages for ${agentName}`);
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey,
+				type: "runtime_messages_merged",
+				messageCount: messages.length,
+				messageIds: messages.map((entry) => entry.id),
+			});
 		}
 		console.log(`   → Processing: ${agentName}`);
 
@@ -299,6 +331,15 @@ class Daemon {
 			messageId: message.id,
 			messagePreview: message.text.slice(0, 200),
 		});
+		this.emitRuntimeEvent({
+			source: "pion",
+			contextKey,
+			type: "runtime_processing_start",
+			agentName,
+			provider: message.provider,
+			chatId: message.chatId,
+			messageId: message.id,
+		});
 
 		let typingInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -310,6 +351,14 @@ class Daemon {
 			// Check: were we superseded during sendTyping?
 			if (!this.isCurrentGeneration(contextKey, gen)) {
 				console.log("   ⏹️ Superseded before processing");
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_processing_complete",
+					outcome: "superseded",
+					messagesSent: 0,
+					responseLength: 0,
+				});
 				return;
 			}
 
@@ -333,6 +382,14 @@ class Daemon {
 			// Check again: were we superseded during tool setup?
 			if (!this.isCurrentGeneration(contextKey, gen)) {
 				console.log("   ⏹️ Superseded before processing");
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_processing_complete",
+					outcome: "superseded",
+					messagesSent: 0,
+					responseLength: 0,
+				});
 				return;
 			}
 
@@ -343,14 +400,12 @@ class Daemon {
 			// Process with agent — onMessage fires for each complete text block
 			// (text before tool calls, between tool calls, and final text)
 			const isCancelled = () => !this.isCurrentGeneration(contextKey, gen);
-			const result = await this.runner.process(
-				message,
-				{
-					agentConfig: agent,
-					contextKey,
-					customTools,
-				},
-				(text) => {
+			const result = await this.runner.process(message, {
+				agentConfig: agent,
+				contextKey,
+				customTools,
+			}, {
+				onTextBlock: (text) => {
 					// Suppress output if this run was superseded
 					if (isCancelled()) return;
 
@@ -358,13 +413,24 @@ class Daemon {
 					console.log(
 						`   📤 Message ${msgNum}: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`,
 					);
+					const replyTo = msgNum === 1 ? message.id : undefined;
 					const sendPromise = provider
 						.send({
 							chatId: message.chatId,
 							text,
-							replyTo: msgNum === 1 ? message.id : undefined,
+							replyTo,
 						})
-						.then(() => {})
+						.then(() => {
+							this.emitRuntimeEvent({
+								source: "pion",
+								contextKey,
+								type: "runtime_output_sent",
+								provider: message.provider,
+								chatId: message.chatId,
+								replyTo,
+								text,
+							});
+						})
 						.catch((err) => {
 							console.error(`   ✗ Message ${msgNum} failed:`, err);
 						});
@@ -372,19 +438,33 @@ class Daemon {
 					messagesSent++;
 				},
 				isCancelled,
-			);
+			});
 
 			await Promise.all(pendingSends);
 
 			// Don't send warnings/fallback if superseded
 			if (!this.isCurrentGeneration(contextKey, gen)) {
 				console.log("   ⏹️ Superseded (output suppressed)");
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_processing_complete",
+					outcome: "superseded",
+					messagesSent,
+					responseLength: result.response.length,
+				});
 				return;
 			}
 
 			// Send warnings (if any)
 			for (const warning of result.warnings) {
 				console.log("   ⚠️ Sending warning");
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_warning_emitted",
+					warning,
+				});
 				await provider.send({
 					chatId: message.chatId,
 					text: warning,
@@ -400,25 +480,71 @@ class Daemon {
 					text: result.response,
 					replyTo: message.id,
 				});
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_output_sent",
+					provider: message.provider,
+					chatId: message.chatId,
+					replyTo: message.id,
+					text: result.response,
+				});
+				messagesSent = 1;
 				console.log(`   ✓ Sent (${result.response.length} chars)`);
 			}
+
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey,
+				type: "runtime_processing_complete",
+				outcome: "completed",
+				messagesSent,
+				responseLength: result.response.length,
+			});
 		} catch (error) {
 			// Don't send error messages for superseded runs
 			if (!this.isCurrentGeneration(contextKey, gen)) {
 				console.log("   ⏹️ Superseded (error suppressed)");
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_processing_complete",
+					outcome: "superseded",
+					messagesSent: 0,
+					responseLength: 0,
+				});
 				return;
 			}
 
 			console.error("   ✗ Error:", error instanceof Error ? error.message : error);
+			const errorText =
+				error instanceof UserFacingError
+					? error.userMessage
+					: "Sorry, I encountered an error. Please try again.";
 
 			// Send error message back
 			await provider.send({
 				chatId: message.chatId,
-				text:
-					error instanceof UserFacingError
-						? error.userMessage
-						: "Sorry, I encountered an error. Please try again.",
+				text: errorText,
 				replyTo: message.id,
+			});
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey,
+				type: "runtime_output_sent",
+				provider: message.provider,
+				chatId: message.chatId,
+				replyTo: message.id,
+				text: errorText,
+			});
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey,
+				type: "runtime_processing_complete",
+				outcome: "failed",
+				messagesSent: 1,
+				responseLength: errorText.length,
+				errorMessage: error instanceof Error ? error.message : String(error),
 			});
 		} finally {
 			if (typingInterval) clearInterval(typingInterval);
@@ -432,9 +558,18 @@ class Daemon {
 	 * Bumps generation so in-flight work bails, and aborts the runner.
 	 * Returns true if something was actively running.
 	 */
-	private async supersedeActiveWork(contextKey: string): Promise<boolean> {
+	private async supersedeActiveWork(
+		contextKey: string,
+		reason: "stop" | "new" | "compact",
+	): Promise<boolean> {
 		const wasBusy = this.runner.isStreaming(contextKey) || this.processingContexts.has(contextKey);
 		if (wasBusy) {
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey,
+				type: "runtime_superseded",
+				reason,
+			});
 			this.nextGeneration(contextKey);
 			await this.runner.abort(contextKey).catch(() => {});
 		}
@@ -452,7 +587,7 @@ class Daemon {
 			switch (cmd.command) {
 				case "new": {
 					// Supersede active work before clearing session
-					await this.supersedeActiveWork(contextKey);
+					await this.supersedeActiveWork(contextKey, "new");
 					this.runner.clearSession(contextKey);
 					await provider.send({
 						chatId,
@@ -463,7 +598,7 @@ class Daemon {
 				}
 
 				case "stop": {
-					const wasBusy = await this.supersedeActiveWork(contextKey);
+					const wasBusy = await this.supersedeActiveWork(contextKey, "stop");
 
 					if (wasBusy || cancelledCount > 0) {
 						await provider.send({
@@ -483,7 +618,7 @@ class Daemon {
 
 				case "compact": {
 					// Supersede active work before compacting
-					await this.supersedeActiveWork(contextKey);
+					await this.supersedeActiveWork(contextKey, "compact");
 
 					const sessionFile = this.runner.getSessionFile(contextKey);
 

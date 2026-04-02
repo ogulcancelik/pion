@@ -15,6 +15,12 @@ import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { getAuthPath } from "./auth.js";
 import { expandTilde, homeDir } from "./paths.js";
+import {
+	createPiRuntimeEvent,
+	RuntimeEventBus,
+	type RuntimeEvent,
+	type RuntimeEventListener,
+} from "./runtime-events.js";
 import { buildSystemPromptWithSkills } from "./skills.js";
 
 /**
@@ -32,7 +38,6 @@ function createNoOpResourceLoader(systemPrompt?: string): ResourceLoader {
 		getAgentsFiles: () => ({ agentsFiles: [] }),
 		getSystemPrompt: () => systemPrompt,
 		getAppendSystemPrompt: () => [],
-		getPathMetadata: () => new Map(),
 		extendResources: () => {},
 		reload: async () => {},
 	};
@@ -49,6 +54,8 @@ export interface RunnerConfig {
 	authPath?: string;
 	/** Directory containing skills (default: ~/.pion/skills) */
 	skillsDir?: string;
+	/** Shared runtime event bus for Pi SDK + daemon events */
+	runtimeEventBus?: RuntimeEventBus;
 }
 
 export interface RunnerContext {
@@ -62,6 +69,12 @@ export interface ProcessResult {
 	response: string;
 	/** System warnings to send before the response */
 	warnings: string[];
+}
+
+export interface RunnerProcessOptions {
+	onTextBlock?: (text: string) => void;
+	onEvent?: (event: RuntimeEvent) => void;
+	isCancelled?: () => boolean;
 }
 
 export interface SavedMediaAttachment {
@@ -289,18 +302,32 @@ export function buildPromptTextWithMediaPaths(
 }
 
 export function findRetryBranchParentId(
-	branchEntries: Array<{
-		type?: string;
-		parentId?: string | null;
-		message?: {
-			role?: string;
-			stopReason?: string;
-			content?: Array<{ type?: string }>;
-		};
-	}>,
+	branchEntries: Array<any>,
 ): string | null | undefined {
-	const assistantError = branchEntries.at(-1);
-	const failedUserTurn = branchEntries.at(-2);
+	const assistantError = branchEntries.at(-1) as
+		| {
+				type?: string;
+				parentId?: string | null;
+				message?: {
+					role?: string;
+					stopReason?: string;
+					errorMessage?: string;
+					content?: unknown;
+				};
+		  }
+		| undefined;
+	const failedUserTurn = branchEntries.at(-2) as
+		| {
+				type?: string;
+				parentId?: string | null;
+				message?: {
+					role?: string;
+					stopReason?: string;
+					errorMessage?: string;
+					content?: unknown;
+				};
+		  }
+		| undefined;
 	if (
 		assistantError?.type !== "message" ||
 		assistantError.message?.role !== "assistant" ||
@@ -310,7 +337,11 @@ export function findRetryBranchParentId(
 	) {
 		return undefined;
 	}
-	const hasImage = failedUserTurn.message.content?.some((part) => part.type === "image");
+	const hasImage = Array.isArray(failedUserTurn.message.content)
+		? failedUserTurn.message.content.some(
+				(part) => typeof part === "object" && part !== null && "type" in part && part.type === "image",
+			)
+		: false;
 	if (!hasImage) {
 		return undefined;
 	}
@@ -335,6 +366,7 @@ export class Runner {
 	private skillsDir: string;
 	private authStorage: AuthStorage;
 	private modelRegistry: ModelRegistry;
+	private runtimeEventBus: RuntimeEventBus;
 	private sessions: Map<string, RunnerSession> = new Map();
 	private warningState: Map<string, WarningState> = new Map();
 
@@ -352,22 +384,16 @@ export class Runner {
 		// Explicitly set models.json path to workspace dir
 		const modelsJsonPath = join(this.dataDir, "agents/main/models.json");
 		this.modelRegistry = ModelRegistry.create(this.authStorage, modelsJsonPath);
+		this.runtimeEventBus = config.runtimeEventBus ?? new RuntimeEventBus(this.dataDir);
 	}
 
 	/**
 	 * Process a message and return the response with any warnings.
-	 *
-	 * @param onMessage Called with each complete text block as the agent produces it
-	 *   (e.g., text before a tool call, text between tool calls, final text).
-	 *   Each call contains a full, self-contained message — no partial streams.
-	 * @param isCancelled Optional callback checked at async boundaries.
-	 *   If it returns true, processing is aborted early and the response is empty.
 	 */
 	async process(
 		message: Message,
 		context: RunnerContext,
-		onMessage?: (text: string) => void,
-		isCancelled?: () => boolean,
+		options: RunnerProcessOptions = {},
 	): Promise<ProcessResult> {
 		let session = this.sessions.get(context.contextKey);
 
@@ -376,21 +402,25 @@ export class Runner {
 			this.sessions.set(context.contextKey, session);
 		}
 
-		if (isCancelled?.()) return { response: "", warnings: [] };
+		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
 		const mediaDir = join(tmpdir(), "pion-media", context.contextKey.replace(/[:/\\]/g, "-"));
 		const savedAttachments = await materializeMediaAttachments(message, mediaDir);
+		if (savedAttachments.length > 0) {
+			console.log(
+				`[runner] Stored ${savedAttachments.length} attachment(s) for ${context.contextKey}: ${savedAttachments.map((attachment) => attachment.path).join(", ")}`,
+			);
+		}
 
-		if (isCancelled?.()) return { response: "", warnings: [] };
+		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
 		const response = await session.prompt(
 			buildPromptTextWithMediaPaths(message.text, savedAttachments),
 			undefined,
-			onMessage,
-			isCancelled,
+			options,
 		);
 
-		if (isCancelled?.()) return { response: "", warnings: [] };
+		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
 		// Check for context warnings
 		const warnings = this.checkContextWarnings(context.contextKey, session);
@@ -428,6 +458,14 @@ export class Runner {
 		return warnings;
 	}
 
+	subscribeRuntimeEvents(listener: RuntimeEventListener): () => void {
+		return this.runtimeEventBus.subscribe(listener);
+	}
+
+	getRuntimeEventFile(contextKey: string): string {
+		return this.runtimeEventBus.getEventLogFile(contextKey);
+	}
+
 	private async createSession(context: RunnerContext): Promise<RunnerSession> {
 		// Build session file path from context key
 		// telegram:contact:123 → sessions/telegram-contact-123.jsonl
@@ -440,6 +478,7 @@ export class Runner {
 			sessionFile,
 			skillsDir: this.skillsDir,
 			modelRegistry: this.modelRegistry,
+			runtimeEventBus: this.runtimeEventBus,
 			customTools: context.customTools,
 		});
 	}
@@ -606,6 +645,7 @@ interface RunnerSessionConfig {
 	sessionFile: string;
 	skillsDir: string;
 	modelRegistry: ModelRegistry;
+	runtimeEventBus: RuntimeEventBus;
 	customTools?: ToolDefinition[];
 }
 
@@ -680,14 +720,13 @@ class RunnerSession {
 	async prompt(
 		text: string,
 		images?: Array<{ type: "image"; data: string; mimeType: string }>,
-		onMessage?: (text: string) => void,
-		isCancelled?: () => boolean,
+		options: RunnerProcessOptions = {},
 	): Promise<string> {
 		if (!this.initialized) {
 			await this.initialize();
 		}
 
-		if (isCancelled?.()) return "";
+		if (options.isCancelled?.()) return "";
 
 		if (!this.agentSession) {
 			throw new Error("Session not initialized");
@@ -696,13 +735,16 @@ class RunnerSession {
 		// Collect all text blocks for the full response
 		const textBlocks: string[] = [];
 
-		// Subscribe to events — send complete text blocks as they finish
+		// Subscribe to the full Pi SDK event stream and fan it out into Pion runtime events.
 		const unsubscribe = this.agentSession.subscribe((event: AgentSessionEvent) => {
-			// message_end fires when a complete assistant message is ready
-			// (before tool execution, or at the end of the turn)
+			const runtimeEvent = this.config.runtimeEventBus.emit(
+				createPiRuntimeEvent(this.config.contextKey, this.config.sessionFile, event),
+			);
+			options.onEvent?.(runtimeEvent);
+
+			// Keep the legacy text-block behavior as a derived view over the richer event stream.
 			if (event.type === "message_end" && event.message.role === "assistant") {
 				const msg = event.message;
-				// Extract text content (skip thinking, tool calls)
 				const text = msg.content
 					.filter((c: { type: string }) => c.type === "text")
 					.map((c: { type: string; text?: string }) => c.text || "")
@@ -711,7 +753,7 @@ class RunnerSession {
 
 				if (text) {
 					textBlocks.push(text);
-					onMessage?.(text);
+					options.onTextBlock?.(text);
 				}
 			}
 		});

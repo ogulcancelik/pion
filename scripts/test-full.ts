@@ -69,17 +69,15 @@ async function main() {
 			// Process with agent
 			console.log("   → Processing with pi-agent...");
 
-			const result = await runner.process(
-				message,
-				{
-					agentConfig: route.agent,
-					contextKey: route.contextKey,
-				},
-				(chunk) => {
+			const result = await runner.process(message, {
+				agentConfig: route.agent,
+				contextKey: route.contextKey,
+			}, {
+				onTextBlock: (chunk: string) => {
 					// For now, just log chunks - later we'll stream them
 					console.log(`   📤 Chunk: ${chunk.slice(0, 50)}...`);
 				},
-			);
+			});
 
 			// Send warnings
 			for (const warning of result.warnings) {

@@ -260,6 +260,7 @@ class MessageLog extends Container {
 					if (tool.name && tool.id) {
 						const toolComponent = new ToolExecutionComponent(
 							tool.name,
+							tool.id,
 							tool.arguments,
 							{},
 							undefined,

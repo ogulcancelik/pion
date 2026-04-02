@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	Runner,
@@ -345,7 +346,9 @@ describe("Runner", () => {
 			await session.initialize();
 
 			expect(session.agentSession).toBeDefined();
-			expect(session.agentSession.modelRegistry).toBe(session.config.modelRegistry);
+			expect(session.agentSession.modelRegistry).toBe(
+				session.config.modelRegistry as TestRunnerSession["agentSession"]["modelRegistry"],
+			);
 			const model = session.agentSession.modelRegistry.find("test-provider", "demo-model");
 			expect(model).toBeDefined();
 			expect(session.agentSession.modelRegistry.hasConfiguredAuth(model)).toBe(true);
@@ -390,6 +393,119 @@ describe("Runner", () => {
 			expect(prompt).toBe(
 				"look at these\n\n[User attached image: /tmp/one.jpg]\n[User attached image: /tmp/two.png]",
 			);
+		});
+
+		test("runner.process sends attachment paths as text and no inline images", async () => {
+			const fakePrompt = async (
+				text: string,
+				images: Array<{ type: "image"; data: string; mimeType: string }> | undefined,
+			) => {
+				captured.text = text;
+				captured.images = images;
+				return "ok";
+			};
+			const captured: {
+				text?: string;
+				images?: Array<{ type: "image"; data: string; mimeType: string }>;
+			} = {};
+			const fakeSession = {
+				prompt: fakePrompt,
+				getContextUsage: () => null,
+			};
+			const testRunner = new Runner({ dataDir: testDir });
+			(
+				testRunner as unknown as {
+					createSession(): Promise<typeof fakeSession>;
+				}
+			).createSession = async () => fakeSession;
+
+			const result = await testRunner.process(
+				{
+					id: "msg-2",
+					chatId: "chat-1",
+					senderId: "user-1",
+					text: "can you inspect this",
+					isGroup: false,
+					provider: "telegram",
+					timestamp: new Date("2026-04-02T15:01:00Z"),
+					raw: {},
+					media: [
+						{ type: "image", buffer: Buffer.from("fake image bytes"), mimeType: "image/jpeg" },
+					],
+				},
+				{
+					contextKey: "telegram:contact:user-1",
+					agentConfig: {
+						model: "anthropic/claude-sonnet-4-20250514",
+						workspace: join(testDir, "agents", "main"),
+						skills: [],
+					},
+				},
+			);
+
+			expect(result.response).toBe("ok");
+			expect(captured.images).toBeUndefined();
+			expect(captured.text).toContain("can you inspect this");
+			expect(captured.text).toContain("[User attached image:");
+			const match = captured.text?.match(/\[User attached image: (.+)\]/);
+			expect(match).toBeDefined();
+			expect(match?.[1]?.startsWith(join(tmpdir(), "pion-media"))).toBe(true);
+			expect(existsSync(match?.[1] || "")).toBe(true);
+		});
+
+		test("runner.process forwards structured runtime events alongside text callbacks", async () => {
+			const seenTexts: string[] = [];
+			const seenEvents: Array<{ type: string; source: string }> = [];
+			const fakeSession = {
+				prompt: async (
+					_text: string,
+					_images: Array<{ type: "image"; data: string; mimeType: string }> | undefined,
+					options?: {
+						onTextBlock?: (text: string) => void;
+						onEvent?: (event: { type: string; source: string }) => void;
+					},
+				) => {
+					options?.onEvent?.({ type: "message_end", source: "pi" });
+					options?.onTextBlock?.("hello from event stream");
+					return "hello from event stream";
+				},
+				getContextUsage: () => null,
+			};
+			const testRunner = new Runner({ dataDir: testDir });
+			(
+				testRunner as unknown as {
+					createSession(): Promise<typeof fakeSession>;
+				}
+			).createSession = async () => fakeSession;
+
+			const result = await testRunner.process(
+				{
+					id: "msg-3",
+					chatId: "chat-1",
+					senderId: "user-1",
+					text: "stream it",
+					isGroup: false,
+					provider: "telegram",
+					timestamp: new Date("2026-04-02T15:02:00Z"),
+					raw: {},
+				},
+				{
+					contextKey: "telegram:contact:user-1",
+					agentConfig: {
+						model: "anthropic/claude-sonnet-4-20250514",
+						workspace: join(testDir, "agents", "main"),
+						skills: [],
+					},
+				},
+				{
+					onTextBlock: (text) => seenTexts.push(text),
+					onEvent: (event) => seenEvents.push(event),
+				},
+			);
+
+			expect(result.response).toBe("hello from event stream");
+			expect(seenTexts).toEqual(["hello from event stream"]);
+			expect(seenEvents).toEqual([{ type: "message_end", source: "pi" }]);
 		});
 	});
 
