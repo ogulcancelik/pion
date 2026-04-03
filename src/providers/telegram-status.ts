@@ -115,6 +115,16 @@ function summarizeToolCall(toolName: string, args: unknown): string {
 	return toolLabel(toolName);
 }
 
+function finalStatusLine(event: Extract<RuntimeEvent, { source: "pion"; type: "runtime_processing_complete" }>): string {
+	if (event.outcome === "failed") {
+		return `⚠️ failed${event.errorMessage ? ` — ${event.errorMessage}` : ""}`;
+	}
+	if (event.outcome === "superseded") {
+		return "⏹️ stopped";
+	}
+	return "✅ done";
+}
+
 export class TelegramStatusSink {
 	private states = new Map<string, TelegramStatusState>();
 	private eventQueue: Promise<void> = Promise.resolve();
@@ -210,8 +220,8 @@ export class TelegramStatusSink {
 		if (event.type === "runtime_processing_complete") {
 			const state = this.states.get(event.contextKey);
 			if (!state) return;
-			if (event.outcome === "failed" && state.handle) {
-				state.statusLine = `⚠️ failed${event.errorMessage ? ` — ${event.errorMessage}` : ""}`;
+			state.statusLine = finalStatusLine(event);
+			if (!this.options.clearOnComplete || event.outcome === "failed") {
 				await this.pushStatus(state);
 			}
 			if (this.options.clearOnComplete) {

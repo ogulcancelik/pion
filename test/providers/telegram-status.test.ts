@@ -620,7 +620,41 @@ describe("TelegramStatusSink", () => {
 		expect(clearStatus).not.toHaveBeenCalled();
 		expect(upsertStatus.mock.calls.at(-1)?.[0]).toEqual({
 			chatId: "chat-1",
-			text: "⚙️ working\n\n📖 read · `src/second.ts`",
+			handle: handles[1],
+			text: "✅ done\n\n📖 read · `src/second.ts`",
+			actions: [],
+		});
+	});
+
+	test("marks the status as done on completion when clearOnComplete is disabled even without tool calls", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus,
+			}),
+			{ clearOnComplete: false },
+		);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-complete-no-tools",
+			timestamp: "2026-04-02T21:00:05.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_processing_complete",
+			outcome: "completed",
+			messagesSent: 1,
+			responseLength: 12,
+		});
+
+		expect(clearStatus).not.toHaveBeenCalled();
+		expect(upsertStatus.mock.calls.at(-1)?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: "✅ done",
 			actions: [],
 		});
 	});
