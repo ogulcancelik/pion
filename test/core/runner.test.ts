@@ -14,6 +14,7 @@ import {
 	buildPromptTextWithMediaPaths,
 	materializeInboundMessage,
 	materializeMediaAttachments,
+	prepareInboundMessage,
 	resolveFetchedImageMimeType,
 } from "../../src/core/inbound.js";
 
@@ -428,6 +429,29 @@ describe("Runner", () => {
 			expect(materialized.attachments[0]?.kind).toBe("image");
 			expect(materialized.attachments[0]?.source.provider).toBe("telegram");
 			expect(materialized.attachments[0]?.path).toContain("materialized-envelope");
+		});
+
+		test("prepareInboundMessage returns both the materialized message and prompt projection", async () => {
+			const prepared = await prepareInboundMessage(
+				{
+					id: "msg-prepared-1",
+					chatId: "chat-1",
+					senderId: "user-1",
+					text: "look at this",
+					isGroup: false,
+					provider: "telegram",
+					timestamp: new Date("2026-04-02T15:00:45Z"),
+					raw: {},
+					media: [
+						{ type: "image", buffer: Buffer.from("fake image bytes"), mimeType: "image/jpeg" },
+					],
+				},
+				join(testDir, "prepared-inbound"),
+			);
+
+			expect(prepared.message.attachments).toHaveLength(1);
+			expect(prepared.promptText).toContain("look at this");
+			expect(prepared.promptText).toContain("[User attached image:");
 		});
 
 		test("runner.process sends attachment paths as text and no inline images", async () => {

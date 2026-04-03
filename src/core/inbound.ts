@@ -4,6 +4,11 @@ import type { MaterializedAttachment, MaterializedMessage, Message } from "../pr
 
 export type SavedMediaAttachment = MaterializedAttachment;
 
+export interface PreparedInboundMessage {
+	message: MaterializedMessage;
+	promptText: string;
+}
+
 const SUPPORTED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 const MEDIA_FILE_EXTENSIONS: Record<string, string> = {
 	"image/jpeg": ".jpg",
@@ -130,4 +135,18 @@ export function buildPromptTextWithMediaPaths(
 		attachments.map((attachment) => `[User attached ${attachment.kind}: ${attachment.path}]`).join("\n"),
 	);
 	return parts.join("\n\n");
+}
+
+export async function prepareInboundMessage(
+	message: Message,
+	mediaDir: string,
+): Promise<PreparedInboundMessage> {
+	const materializedMessage = await materializeInboundMessage(message, mediaDir);
+	return {
+		message: materializedMessage,
+		promptText: buildPromptTextWithMediaPaths(
+			materializedMessage.text,
+			materializedMessage.attachments,
+		),
+	};
 }

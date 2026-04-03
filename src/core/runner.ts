@@ -14,7 +14,7 @@ import type { ResourceLoader } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { getAuthPath } from "./auth.js";
-import { buildPromptTextWithMediaPaths, materializeInboundMessage } from "./inbound.js";
+import { prepareInboundMessage } from "./inbound.js";
 import { expandTilde, homeDir } from "./paths.js";
 import {
 	createPiRuntimeEvent,
@@ -288,20 +288,16 @@ export class Runner {
 		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
 		const mediaDir = join(tmpdir(), "pion-media", context.contextKey.replace(/[:/\\]/g, "-"));
-		const materializedMessage = await materializeInboundMessage(message, mediaDir);
-		if (materializedMessage.attachments.length > 0) {
+		const preparedInbound = await prepareInboundMessage(message, mediaDir);
+		if (preparedInbound.message.attachments.length > 0) {
 			console.log(
-				`[runner] Stored ${materializedMessage.attachments.length} attachment(s) for ${context.contextKey}: ${materializedMessage.attachments.map((attachment) => attachment.path).join(", ")}`,
+				`[runner] Stored ${preparedInbound.message.attachments.length} attachment(s) for ${context.contextKey}: ${preparedInbound.message.attachments.map((attachment) => attachment.path).join(", ")}`,
 			);
 		}
 
 		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
-		const response = await session.prompt(
-			buildPromptTextWithMediaPaths(materializedMessage.text, materializedMessage.attachments),
-			undefined,
-			options,
-		);
+		const response = await session.prompt(preparedInbound.promptText, undefined, options);
 
 		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
