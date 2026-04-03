@@ -370,6 +370,7 @@ export class Runner {
 			if (!firstLine) {
 				// Empty file, just delete
 				renameSync(sessionFile, `${sessionFile}.empty`);
+				this.runtimeEventBus.removeSessionFile(sessionFile);
 				return;
 			}
 
@@ -393,6 +394,8 @@ export class Runner {
 			}
 
 			renameSync(sessionFile, finalPath);
+			this.runtimeEventBus.removeSessionFile(sessionFile);
+			this.runtimeEventBus.syncSessionFile(finalPath);
 			console.log(`[runner] Archived session to ${finalPath}`);
 		} catch (err) {
 			// If archiving fails, log but don't block
@@ -441,6 +444,7 @@ export class Runner {
 			sessionFile,
 			`${JSON.stringify(sessionEntry)}\n${JSON.stringify(messageEntry)}\n`,
 		);
+		this.runtimeEventBus.syncSessionFile(sessionFile);
 	}
 
 	/**
@@ -653,6 +657,7 @@ class RunnerSession {
 
 			return textBlocks.join("\n\n");
 		} finally {
+			this.config.runtimeEventBus.syncSessionFile(this.config.sessionFile);
 			unsubscribe();
 		}
 	}
@@ -709,5 +714,6 @@ class RunnerSession {
 
 		this.agentSession = result.session;
 		this.initialized = true;
+		this.config.runtimeEventBus.syncSessionFile(this.config.sessionFile);
 	}
 }
