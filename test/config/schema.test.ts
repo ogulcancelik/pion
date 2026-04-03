@@ -89,6 +89,36 @@ describe("validateConfig", () => {
 		expect(errors).toHaveLength(0);
 	});
 
+	test("accepts agent cwd override when it is a string", () => {
+		const errors = validateConfig({
+			agents: {
+				main: {
+					model: "x",
+					systemPrompt: "y",
+					workspace: "/tmp/pion/agents/main",
+					cwd: "/tmp/project",
+				},
+			},
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test("rejects non-string agent cwd override", () => {
+		const errors = validateConfig({
+			agents: {
+				main: {
+					model: "x",
+					systemPrompt: "y",
+					workspace: "/tmp/pion/agents/main",
+					cwd: 123,
+				},
+			},
+			routes: [],
+		});
+		expect(errors).toContain("agents.main.cwd must be a string");
+	});
+
 	test("accepts telegram status clearOnComplete flag", () => {
 		const errors = validateConfig({
 			telegram: {

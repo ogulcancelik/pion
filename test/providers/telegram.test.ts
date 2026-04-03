@@ -1,13 +1,61 @@
 import { describe, expect, test } from "bun:test";
 import { TelegramProvider } from "../../src/providers/telegram.js";
+import type { ActionMessage, Message } from "../../src/providers/types.js";
 
 // Mock grammy Bot - we don't want to hit real API in unit tests
 // These tests verify our provider logic, not Grammy itself
 
+type TelegramApiResult = {
+	message_id: number;
+	chat: { id: number };
+};
+
+type TestTelegramApi = {
+	sendMessage: (...args: unknown[]) => Promise<TelegramApiResult>;
+	editMessageText: (...args: unknown[]) => Promise<true>;
+	deleteMessage: (...args: unknown[]) => Promise<true>;
+	setChatMenuButton: (...args: unknown[]) => Promise<true>;
+	getMe?: () => Promise<{ username: string }>;
+	setMyCommands?: (...args: unknown[]) => Promise<void>;
+};
+
+type TestTelegramBot = {
+	api: TestTelegramApi;
+	start?: (options: { onStart?: () => void }) => void;
+	stop?: () => Promise<void>;
+};
+
+type TestCallbackQuery = {
+	id: string;
+	from: { id: number | string; first_name?: string; username?: string };
+	data: string;
+	message?: {
+		message_id: number | string;
+		date: number;
+		chat: { id: number | string; type: string };
+	};
+};
+
+function setTestBot(provider: TelegramProvider, bot: TestTelegramBot): void {
+	(provider as unknown as { bot: TestTelegramBot }).bot = bot;
+}
+
+function dispatchTestMessage(provider: TelegramProvider, message: Message): void {
+	(provider as unknown as { dispatchMessage(message: Message): void }).dispatchMessage(message);
+}
+
+function dispatchTestAction(provider: TelegramProvider, callbackQuery: TestCallbackQuery): void {
+	(
+		provider as unknown as {
+			dispatchAction(callbackQuery: TestCallbackQuery): void;
+		}
+	).dispatchAction(callbackQuery);
+}
+
 describe("TelegramProvider", () => {
 	function createProvider() {
 		const provider = new TelegramProvider({ botToken: "test-token" });
-		const api = {
+		const api: TestTelegramApi = {
 			sendMessage: async () => ({
 				message_id: 42,
 				chat: { id: 123 },
@@ -16,7 +64,7 @@ describe("TelegramProvider", () => {
 			deleteMessage: async () => true,
 			setChatMenuButton: async () => true,
 		};
-		(provider as any).bot = { api };
+		setTestBot(provider, { api });
 		return { provider, api };
 	}
 
@@ -37,8 +85,8 @@ describe("TelegramProvider", () => {
 
 	test("upsertStatus sends a new message when no handle exists", async () => {
 		const { provider, api } = createProvider();
-		let sendArgs: any[] | undefined;
-		api.sendMessage = async (...args: any[]) => {
+		let sendArgs: unknown[] | undefined;
+		api.sendMessage = async (...args: unknown[]) => {
 			sendArgs = args;
 			return {
 				message_id: 42,
@@ -63,8 +111,8 @@ describe("TelegramProvider", () => {
 
 	test("upsertStatus edits an existing status message when handle exists", async () => {
 		const { provider, api } = createProvider();
-		let editArgs: any[] | undefined;
-		api.editMessageText = async (...args: any[]) => {
+		let editArgs: unknown[] | undefined;
+		api.editMessageText = async (...args: unknown[]) => {
 			editArgs = args;
 			return true;
 		};
@@ -79,7 +127,12 @@ describe("TelegramProvider", () => {
 			text: "updated status",
 		});
 
-		expect(editArgs).toEqual(["123", 42, expect.stringContaining("updated status"), expect.any(Object)]);
+		expect(editArgs).toEqual([
+			"123",
+			42,
+			expect.stringContaining("updated status"),
+			expect.any(Object),
+		]);
 		expect(handle).toEqual({
 			provider: "telegram",
 			chatId: "123",
@@ -89,8 +142,8 @@ describe("TelegramProvider", () => {
 
 	test("clearStatus deletes an existing status message", async () => {
 		const { provider, api } = createProvider();
-		let deleteArgs: any[] | undefined;
-		api.deleteMessage = async (...args: any[]) => {
+		let deleteArgs: unknown[] | undefined;
+		api.deleteMessage = async (...args: unknown[]) => {
 			deleteArgs = args;
 			return true;
 		};
@@ -106,8 +159,8 @@ describe("TelegramProvider", () => {
 
 	test("upsertStatus includes inline keyboard actions when sending a new status", async () => {
 		const { provider, api } = createProvider();
-		let sendArgs: any[] | undefined;
-		api.sendMessage = async (...args: any[]) => {
+		let sendArgs: unknown[] | undefined;
+		api.sendMessage = async (...args: unknown[]) => {
 			sendArgs = args;
 			return {
 				message_id: 42,
@@ -138,8 +191,8 @@ describe("TelegramProvider", () => {
 
 	test("upsertStatus includes inline keyboard actions when editing an existing status", async () => {
 		const { provider, api } = createProvider();
-		let editArgs: any[] | undefined;
-		api.editMessageText = async (...args: any[]) => {
+		let editArgs: unknown[] | undefined;
+		api.editMessageText = async (...args: unknown[]) => {
 			editArgs = args;
 			return true;
 		};
@@ -165,11 +218,11 @@ describe("TelegramProvider", () => {
 
 	test("normalizes photos without captions to empty text plus image media", async () => {
 		const provider = new TelegramProvider({ botToken: "test-token" });
-		const messages: any[] = [];
+		const messages: Message[] = [];
 		provider.onMessage((message) => {
 			messages.push(message);
 		});
-		(provider as any).dispatchMessage({
+		dispatchTestMessage(provider, {
 			id: "photo-1",
 			chatId: "123",
 			senderId: "7",
@@ -200,11 +253,11 @@ describe("TelegramProvider", () => {
 
 	test("normalizes voice messages to raw audio media instead of provider-side transcription", async () => {
 		const provider = new TelegramProvider({ botToken: "test-token" });
-		const messages: any[] = [];
+		const messages: Message[] = [];
 		provider.onMessage((message) => {
 			messages.push(message);
 		});
-		(provider as any).dispatchMessage({
+		dispatchTestMessage(provider, {
 			id: "voice-1",
 			chatId: "123",
 			senderId: "7",
@@ -249,12 +302,12 @@ describe("TelegramProvider", () => {
 
 	test("normalizes callback queries into action events", async () => {
 		const provider = new TelegramProvider({ botToken: "test-token" });
-		const actions: any[] = [];
+		const actions: ActionMessage[] = [];
 		provider.onAction?.((action) => {
 			actions.push(action);
 		});
 
-		(provider as any).dispatchAction({
+		dispatchTestAction(provider, {
 			id: "cbq-1",
 			from: { id: 7, first_name: "Can", username: "can" },
 			data: "stop",
@@ -279,7 +332,7 @@ describe("TelegramProvider", () => {
 				data: "stop",
 				raw: expect.any(Object),
 			},
-			]);
+		]);
 	});
 
 	test("upsertStatus treats telegram 'message is not modified' as a no-op success", async () => {
@@ -307,23 +360,27 @@ describe("TelegramProvider", () => {
 
 	test("start registers telegram bot commands and configures the command menu button", async () => {
 		const provider = new TelegramProvider({ botToken: "test-token" });
-		const commandCalls: any[] = [];
-		const menuButtonCalls: any[] = [];
-		(provider as any).bot = {
+		const commandCalls: unknown[][] = [];
+		const menuButtonCalls: unknown[][] = [];
+		setTestBot(provider, {
 			api: {
-				getMe: async () => ({ username: "piontestbot" }),
-				setMyCommands: async (...args: any[]) => {
-					commandCalls.push(args);
-				},
-				setChatMenuButton: async (...args: any[]) => {
+				sendMessage: async () => ({ message_id: 42, chat: { id: 123 } }),
+				editMessageText: async () => true,
+				deleteMessage: async () => true,
+				setChatMenuButton: async (...args: unknown[]) => {
 					menuButtonCalls.push(args);
+					return true;
+				},
+				getMe: async () => ({ username: "piontestbot" }),
+				setMyCommands: async (...args: unknown[]) => {
+					commandCalls.push(args);
 				},
 			},
 			start: ({ onStart }: { onStart?: () => void }) => {
 				onStart?.();
 			},
 			stop: async () => {},
-		};
+		});
 
 		await provider.start();
 
@@ -342,8 +399,8 @@ describe("TelegramProvider", () => {
 
 	test("sendControlMenu sends a native reply keyboard with runner controls", async () => {
 		const { provider, api } = createProvider();
-		let sendArgs: any[] | undefined;
-		api.sendMessage = async (...args: any[]) => {
+		let sendArgs: unknown[] | undefined;
+		api.sendMessage = async (...args: unknown[]) => {
 			sendArgs = args;
 			return {
 				message_id: 77,

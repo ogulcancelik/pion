@@ -17,6 +17,10 @@ export interface MemoryFile {
 	content: string;
 }
 
+export function resolveAgentCwd(agentConfig: AgentConfig): string {
+	return expandTilde(agentConfig.cwd ?? agentConfig.workspace ?? process.cwd());
+}
+
 /**
  * Load workspace files from an agent's workspace directory.
  */

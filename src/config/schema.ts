@@ -33,6 +33,8 @@ export interface AgentConfig {
 	model: string;
 	/** Path to agent workspace containing SOUL.md, IDENTITY.md, etc. */
 	workspace: string;
+	/** Optional execution cwd override. Defaults to workspace when unset. */
+	cwd?: string;
 	/** Optional inline system prompt (used if no workspace or as addition) */
 	systemPrompt?: string;
 	skills?: string[];
@@ -96,13 +98,22 @@ export function validateConfig(config: unknown): string[] {
 					errors.push("telegram.status must be an object");
 				} else {
 					const status = telegram.status as Record<string, unknown>;
-					if (
-						status.clearOnComplete !== undefined &&
-						typeof status.clearOnComplete !== "boolean"
-					) {
+					if (status.clearOnComplete !== undefined && typeof status.clearOnComplete !== "boolean") {
 						errors.push("telegram.status.clearOnComplete must be a boolean");
 					}
 				}
+			}
+		}
+	}
+
+	if (cfg.agents && typeof cfg.agents === "object") {
+		for (const [agentName, agentValue] of Object.entries(cfg.agents as Record<string, unknown>)) {
+			if (!agentValue || typeof agentValue !== "object") {
+				continue;
+			}
+			const agent = agentValue as Record<string, unknown>;
+			if (agent.cwd !== undefined && typeof agent.cwd !== "string") {
+				errors.push(`agents.${agentName}.cwd must be a string`);
 			}
 		}
 	}

@@ -27,7 +27,9 @@ export class Router {
 		return this.routeCommon(action);
 	}
 
-	private routeCommon(message: Pick<ActionMessage, "provider" | "chatId" | "senderId" | "isGroup">): RouteResult {
+	private routeCommon(
+		message: Pick<ActionMessage, "provider" | "chatId" | "senderId" | "isGroup">,
+	): RouteResult {
 		for (const rule of this.config.routes) {
 			if (this.matches(rule, message)) {
 				const agentName = rule.agent;

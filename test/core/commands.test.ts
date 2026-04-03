@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { type ActionMessage } from "../../src/providers/types.js";
 import { type CommandMatch, Commands } from "../../src/core/commands.js";
+import type { ActionMessage } from "../../src/providers/types.js";
 
 describe("Commands", () => {
 	const commands = new Commands();

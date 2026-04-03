@@ -6,43 +6,22 @@ import {
 	ModelRegistry,
 	SessionManager,
 	createAgentSession,
-	createExtensionRuntime,
 } from "@mariozechner/pi-coding-agent";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import type { ResourceLoader } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { getAuthPath } from "./auth.js";
 import { prepareInboundMessage } from "./inbound.js";
 import { expandTilde, homeDir } from "./paths.js";
+import { PionResourceLoader } from "./pion-resource-loader.js";
 import {
-	createPiRuntimeEvent,
-	RuntimeEventBus,
 	type RuntimeEvent,
+	RuntimeEventBus,
 	type RuntimeEventListener,
+	createPiRuntimeEvent,
 } from "./runtime-events.js";
-import { buildSystemPromptWithSkills } from "./skills.js";
-
-/**
- * Minimal no-op resource loader for pion.
- * Pion doesn't use pi's extension/skill/theme discovery — it manages its own.
- * This avoids the DefaultResourceLoader which shells out to `npm root -g`.
- */
-function createNoOpResourceLoader(systemPrompt?: string): ResourceLoader {
-	const emptyExtensions = { extensions: [], errors: [], runtime: createExtensionRuntime() };
-	return {
-		getExtensions: () => emptyExtensions,
-		getSkills: () => ({ skills: [], diagnostics: [] }),
-		getPrompts: () => ({ prompts: [], diagnostics: [] }),
-		getThemes: () => ({ themes: [], diagnostics: [] }),
-		getAgentsFiles: () => ({ agentsFiles: [] }),
-		getSystemPrompt: () => systemPrompt,
-		getAppendSystemPrompt: () => [],
-		extendResources: () => {},
-		reload: async () => {},
-	};
-}
+import { resolveAgentCwd } from "./workspace.js";
 
 /** Warning thresholds for context usage */
 const WARN_THRESHOLD_85 = 85;
@@ -184,33 +163,23 @@ export function classifyRuntimeError(
 	return { kind: "rethrow" };
 }
 
+type RetryBranchEntry = {
+	id?: string;
+	type?: string;
+	parentId?: string | null;
+	message?: {
+		role?: string;
+		stopReason?: string;
+		errorMessage?: string;
+		content?: unknown;
+	};
+};
+
 export function findRetryBranchParentId(
-	branchEntries: Array<any>,
+	branchEntries: RetryBranchEntry[],
 ): string | null | undefined {
-	const assistantError = branchEntries.at(-1) as
-		| {
-				type?: string;
-				parentId?: string | null;
-				message?: {
-					role?: string;
-					stopReason?: string;
-					errorMessage?: string;
-					content?: unknown;
-				};
-		  }
-		| undefined;
-	const failedUserTurn = branchEntries.at(-2) as
-		| {
-				type?: string;
-				parentId?: string | null;
-				message?: {
-					role?: string;
-					stopReason?: string;
-					errorMessage?: string;
-					content?: unknown;
-				};
-		  }
-		| undefined;
+	const assistantError = branchEntries.at(-1);
+	const failedUserTurn = branchEntries.at(-2);
 	if (
 		assistantError?.type !== "message" ||
 		assistantError.message?.role !== "assistant" ||
@@ -222,7 +191,8 @@ export function findRetryBranchParentId(
 	}
 	const hasImage = Array.isArray(failedUserTurn.message.content)
 		? failedUserTurn.message.content.some(
-				(part) => typeof part === "object" && part !== null && "type" in part && part.type === "image",
+				(part) =>
+					typeof part === "object" && part !== null && "type" in part && part.type === "image",
 			)
 		: false;
 	if (!hasImage) {
@@ -436,7 +406,7 @@ export class Runner {
 	 *
 	 * Writes in pi-agent session format so SessionManager picks it up.
 	 */
-	primeSessionWithSummary(contextKey: string, summary: string): void {
+	primeSessionWithSummary(contextKey: string, summary: string, cwd?: string): void {
 		// Clear existing session first
 		this.clearSession(contextKey);
 
@@ -451,7 +421,7 @@ export class Runner {
 			version: 3,
 			id: `compacted-${id}`,
 			timestamp,
-			cwd: process.cwd(),
+			cwd: cwd ? expandTilde(cwd) : process.cwd(),
 		};
 
 		// Summary as user message in pi-agent format
@@ -638,11 +608,8 @@ class RunnerSession {
 		});
 
 		try {
-			const freshSystemPrompt = buildSystemPromptWithSkills(
-				this.config.agentConfig,
-				this.config.skillsDir,
-			);
-			this.agentSession.agent.setSystemPrompt(freshSystemPrompt);
+			await this.agentSession.reload();
+			const freshSystemPrompt = this.agentSession.agent.state.systemPrompt;
 
 			const now = new Date().toISOString();
 			let messagePrefix = `[${now}`;
@@ -707,6 +674,7 @@ class RunnerSession {
 	}
 
 	private async initialize(): Promise<void> {
+		const resolvedCwd = resolveAgentCwd(this.config.agentConfig);
 		// Parse model string: "anthropic/claude-sonnet-4-20250514" → provider + modelId
 		const [provider, modelId] = parseModelString(this.config.agentConfig.model);
 
@@ -724,26 +692,19 @@ class RunnerSession {
 		}
 
 		// Create session manager pointing to our session file
-		const sessionManager = SessionManager.open(this.config.sessionFile);
+		const sessionManager = SessionManager.create(resolvedCwd, sessionDir);
+		sessionManager.setSessionFile(this.config.sessionFile);
 		this.sessionManager = sessionManager;
-
-		// Build system prompt from workspace files
-		const systemPrompt = buildSystemPromptWithSkills(
-			this.config.agentConfig,
-			this.config.skillsDir,
-		);
 
 		// Create the agent session
 		const result = await createAgentSession({
 			model,
+			cwd: resolvedCwd,
 			sessionManager,
 			modelRegistry: this.config.modelRegistry,
-			// No-op resource loader — pion manages its own system prompt and doesn't use
-			// pi's extension/skill/theme discovery (which requires npm on PATH)
-			resourceLoader: createNoOpResourceLoader(systemPrompt),
+			resourceLoader: new PionResourceLoader(this.config.agentConfig, this.config.skillsDir),
 			// Custom tools (e.g., Telegram sticker tool)
 			customTools: this.config.customTools,
-			// TODO: Load skills from agentConfig.skills
 		});
 
 		this.agentSession = result.session;

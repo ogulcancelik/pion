@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentConfig } from "../../src/config/schema.js";
-import { buildSystemPrompt, ensureWorkspace, loadWorkspace } from "../../src/core/workspace.js";
+import {
+	buildSystemPrompt,
+	ensureWorkspace,
+	loadWorkspace,
+	resolveAgentCwd,
+} from "../../src/core/workspace.js";
 
 describe("loadWorkspace", () => {
 	const testDir = "/tmp/pion-test-workspace";
@@ -83,6 +88,27 @@ describe("buildSystemPrompt", () => {
 
 	// NOTE: Runtime context (time, context %) is now in user message prefix
 	// (see runner.ts) to keep system prompt cacheable
+});
+
+describe("resolveAgentCwd", () => {
+	test("defaults execution cwd to workspace", () => {
+		const config: AgentConfig = {
+			model: "anthropic/claude-sonnet-4-20250514",
+			workspace: "/tmp/pion-agent",
+		};
+
+		expect(resolveAgentCwd(config)).toBe("/tmp/pion-agent");
+	});
+
+	test("prefers explicit cwd override", () => {
+		const config: AgentConfig = {
+			model: "anthropic/claude-sonnet-4-20250514",
+			workspace: "/tmp/pion-agent",
+			cwd: "/tmp/project",
+		};
+
+		expect(resolveAgentCwd(config)).toBe("/tmp/project");
+	});
 });
 
 describe("ensureWorkspace", () => {

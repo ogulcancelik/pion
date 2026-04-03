@@ -48,9 +48,9 @@ describe("MessageDebouncer", () => {
 			await Bun.sleep(80);
 
 			expect(flushed).toHaveLength(1);
-			expect(flushed[0]!.contextKey).toBe("ctx-1");
-			expect(flushed[0]!.messages).toHaveLength(1);
-			expect(flushed[0]!.messages[0]!.text).toBe("hello");
+			expect(flushed[0]?.contextKey).toBe("ctx-1");
+			expect(flushed[0]?.messages).toHaveLength(1);
+			expect(flushed[0]?.messages[0]?.text).toBe("hello");
 		});
 
 		test("does not flush before timeout", async () => {
@@ -90,8 +90,8 @@ describe("MessageDebouncer", () => {
 			await Bun.sleep(100);
 
 			expect(flushed).toHaveLength(1);
-			expect(flushed[0]!.messages).toHaveLength(3);
-			expect(flushed[0]!.messages.map((m) => m.text)).toEqual(["hello", "world", "!"]);
+			expect(flushed[0]?.messages).toHaveLength(3);
+			expect(flushed[0]?.messages.map((m) => m.text)).toEqual(["hello", "world", "!"]);
 		});
 
 		test("resets timer on each new message", async () => {
@@ -116,7 +116,7 @@ describe("MessageDebouncer", () => {
 			await Bun.sleep(80);
 
 			expect(flushed).toHaveLength(1);
-			expect(flushed[0]!.messages).toHaveLength(3);
+			expect(flushed[0]?.messages).toHaveLength(3);
 		});
 	});
 
@@ -156,12 +156,12 @@ describe("MessageDebouncer", () => {
 
 			// ctx-1 should have flushed (70ms > 60ms timeout)
 			expect(flushed).toHaveLength(1);
-			expect(flushed[0]!.contextKey).toBe("ctx-1");
+			expect(flushed[0]?.contextKey).toBe("ctx-1");
 
 			// ctx-2 hasn't flushed yet (30ms < 60ms)
 			await Bun.sleep(50);
 			expect(flushed).toHaveLength(2);
-			expect(flushed[1]!.contextKey).toBe("ctx-2");
+			expect(flushed[1]?.contextKey).toBe("ctx-2");
 		});
 	});
 
@@ -178,7 +178,7 @@ describe("MessageDebouncer", () => {
 			const cancelled = debouncer.cancel("ctx-1");
 
 			expect(cancelled).toHaveLength(1);
-			expect(cancelled[0]!.text).toBe("pending");
+			expect(cancelled[0]?.text).toBe("pending");
 
 			// Wait past timeout — should NOT flush
 			await Bun.sleep(80);
@@ -211,7 +211,7 @@ describe("MessageDebouncer", () => {
 			await Bun.sleep(80);
 
 			expect(flushed).toHaveLength(1);
-			expect(flushed[0]!.contextKey).toBe("ctx-1");
+			expect(flushed[0]?.contextKey).toBe("ctx-1");
 		});
 	});
 
@@ -228,7 +228,7 @@ describe("MessageDebouncer", () => {
 			debouncer.flush("ctx-1");
 
 			expect(flushed).toHaveLength(1);
-			expect(flushed[0]!.messages[0]!.text).toBe("urgent");
+			expect(flushed[0]?.messages[0]?.text).toBe("urgent");
 		});
 
 		test("flush on empty context does nothing", () => {

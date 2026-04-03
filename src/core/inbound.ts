@@ -130,7 +130,9 @@ export function buildPromptTextWithMediaPaths(
 		parts.push(messageText);
 	}
 	parts.push(
-		attachments.map((attachment) => `[User attached ${attachment.kind}: ${attachment.path}]`).join("\n"),
+		attachments
+			.map((attachment) => `[User attached ${attachment.kind}: ${attachment.path}]`)
+			.join("\n"),
 	);
 	return parts.join("\n\n");
 }

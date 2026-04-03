@@ -3,6 +3,13 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	buildPromptTextWithMediaPaths,
+	materializeInboundMessage,
+	materializeMediaAttachments,
+	prepareInboundMessage,
+	resolveFetchedImageMimeType,
+} from "../../src/core/inbound.js";
+import {
 	Runner,
 	UserFacingError,
 	buildRuntimeErrorSystemPrompt,
@@ -10,13 +17,6 @@ import {
 	findRetryBranchParentId,
 	parseModelString,
 } from "../../src/core/runner.js";
-import {
-	buildPromptTextWithMediaPaths,
-	materializeInboundMessage,
-	materializeMediaAttachments,
-	prepareInboundMessage,
-	resolveFetchedImageMimeType,
-} from "../../src/core/inbound.js";
 
 describe("Runner", () => {
 	const testDir = join(import.meta.dir, ".test-runner");
@@ -201,6 +201,17 @@ describe("Runner", () => {
 			expect(firstLine.cwd).toBeDefined();
 		});
 
+		test("session header uses provided cwd when priming a compacted session", () => {
+			const compactedCwd = join(testDir, "projects", "compacted");
+			runner.primeSessionWithSummary("test:session:cwd", "Summary text", compactedCwd);
+
+			const sessionFile = runner.getSessionFile("test:session:cwd");
+			const content = readFileSync(sessionFile, "utf-8");
+			const firstLine = JSON.parse(content.split("\n")[0] || "{}");
+
+			expect(firstLine.cwd).toBe(compactedCwd);
+		});
+
 		test("user message wraps summary with prefix", () => {
 			const summary = "User discussed API design for a REST endpoint.";
 			runner.primeSessionWithSummary("test:summary:wrap", summary);
@@ -356,6 +367,137 @@ describe("Runner", () => {
 			const model = session.agentSession.modelRegistry.find("test-provider", "demo-model");
 			expect(model).toBeDefined();
 			expect(session.agentSession.modelRegistry.hasConfiguredAuth(model)).toBe(true);
+		});
+
+		test("uses workspace for prompt loading, defaults cwd to workspace, and allows cwd override for tool execution", async () => {
+			const workspaceDir = join(testDir, "agents", "main");
+			const explicitCwd = join(testDir, "projects", "demo-app");
+			const skillsDir = join(testDir, "skills");
+			mkdirSync(workspaceDir, { recursive: true });
+			mkdirSync(explicitCwd, { recursive: true });
+			mkdirSync(skillsDir, { recursive: true });
+
+			writeFileSync(join(workspaceDir, "SOUL.md"), "workspace soul\n");
+			writeFileSync(
+				join(testDir, "agents", "main", "models.json"),
+				`${JSON.stringify(
+					{
+						providers: {
+							"test-provider": {
+								baseUrl: "http://127.0.0.1:1/v1",
+								apiKey: "TEST_PROVIDER_API_KEY",
+								api: "openai-completions",
+								models: [
+									{
+										id: "demo-model",
+										name: "Demo Model",
+										input: ["text"],
+										cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+										contextWindow: 4096,
+										maxTokens: 256,
+									},
+								],
+							},
+						},
+					},
+					null,
+					2,
+				)}\n`,
+			);
+			writeFileSync(
+				join(testDir, "auth.json"),
+				`${JSON.stringify(
+					{
+						"test-provider": {
+							type: "api_key",
+							key: "test-secret-key",
+						},
+					},
+					null,
+					2,
+				)}\n`,
+			);
+
+			const skillDir = join(skillsDir, "supervise");
+			mkdirSync(skillDir, { recursive: true });
+			writeFileSync(
+				join(skillDir, "SKILL.md"),
+				`---
+name: supervise
+description: Watch runtime state
+---
+`,
+			);
+
+			const isolatedRunner = new Runner({
+				dataDir: testDir,
+				authPath: join(testDir, "auth.json"),
+				skillsDir,
+			});
+
+			type TestRunnerSession = {
+				initialize(): Promise<void>;
+				agentSession: {
+					agent: {
+						state: {
+							systemPrompt: string;
+						};
+					};
+					resourceLoader: {
+						getSkills(): { skills: Array<{ name: string }> };
+					};
+					sessionManager: {
+						getCwd(): string;
+					};
+				};
+			};
+			const createSession = (
+				isolatedRunner as unknown as {
+					createSession(context: {
+						contextKey: string;
+						agentConfig: {
+							model: string;
+							workspace: string;
+							cwd?: string;
+							skills: string[];
+						};
+					}): Promise<TestRunnerSession>;
+				}
+			).createSession.bind(isolatedRunner);
+
+			const defaultCwdSession = await createSession({
+				contextKey: "telegram:contact:workspace-default",
+				agentConfig: {
+					model: "test-provider/demo-model",
+					workspace: workspaceDir,
+					skills: ["supervise"],
+				},
+			});
+			await defaultCwdSession.initialize();
+			expect(defaultCwdSession.agentSession.sessionManager.getCwd()).toBe(workspaceDir);
+			expect(defaultCwdSession.agentSession.agent.state.systemPrompt).toContain("workspace soul");
+			expect(defaultCwdSession.agentSession.agent.state.systemPrompt).toContain(
+				`Current working directory: ${workspaceDir}`,
+			);
+			expect(
+				defaultCwdSession.agentSession.resourceLoader.getSkills().skills.map((skill) => skill.name),
+			).toContain("supervise");
+
+			const overrideCwdSession = await createSession({
+				contextKey: "telegram:contact:cwd-override",
+				agentConfig: {
+					model: "test-provider/demo-model",
+					workspace: workspaceDir,
+					cwd: explicitCwd,
+					skills: ["supervise"],
+				},
+			});
+			await overrideCwdSession.initialize();
+			expect(overrideCwdSession.agentSession.sessionManager.getCwd()).toBe(explicitCwd);
+			expect(overrideCwdSession.agentSession.agent.state.systemPrompt).toContain("workspace soul");
+			expect(overrideCwdSession.agentSession.agent.state.systemPrompt).toContain(
+				`Current working directory: ${explicitCwd}`,
+			);
 		});
 	});
 
@@ -645,11 +787,11 @@ describe("Runner", () => {
 
 		test("preserves source mime separately from detected image mime when fetching attachments", async () => {
 			const originalFetch = globalThis.fetch;
-			globalThis.fetch = ((async () =>
+			globalThis.fetch = (async () =>
 				new Response(Buffer.from("img"), {
 					status: 200,
 					headers: { "content-type": "image/png" },
-				})) as unknown) as typeof fetch;
+				})) as unknown as typeof fetch;
 
 			try {
 				const attachments = await materializeMediaAttachments(

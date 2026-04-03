@@ -340,17 +340,12 @@ export class TelegramProvider implements Provider {
 		buttons: string[][];
 		replyTo?: string;
 	}): Promise<SendResult> {
-		return this.sendTextMessage(
-			options.chatId,
-			options.text,
-			options.replyTo,
-			{
-				keyboard: options.buttons.map((row) => row.map((text) => ({ text }))),
-				resize_keyboard: true,
-				one_time_keyboard: true,
-				is_persistent: false,
-			},
-		);
+		return this.sendTextMessage(options.chatId, options.text, options.replyTo, {
+			keyboard: options.buttons.map((row) => row.map((text) => ({ text }))),
+			resize_keyboard: true,
+			one_time_keyboard: true,
+			is_persistent: false,
+		});
 	}
 
 	private async sendTextMessage(

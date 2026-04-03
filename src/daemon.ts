@@ -29,15 +29,15 @@ import {
 import { Router } from "./core/router.js";
 import { Runner, UserFacingError } from "./core/runner.js";
 import {
-	createMessageReceivedRuntimeEvent,
-	RuntimeEventBus,
 	type PionRuntimeEventInput,
+	RuntimeEventBus,
+	createMessageReceivedRuntimeEvent,
 } from "./core/runtime-events.js";
 import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-state.js";
 import { ensureWorkspace } from "./core/workspace.js";
+import { TelegramStatusSink } from "./providers/telegram-status.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
 import { TelegramProvider } from "./providers/telegram.js";
-import { TelegramStatusSink } from "./providers/telegram-status.js";
 import type { ActionMessage, Message, Provider } from "./providers/types.js";
 
 const DEFAULT_DEBOUNCE_MS = 5000;
@@ -412,45 +412,49 @@ class Daemon {
 			// Process with agent — onMessage fires for each complete text block
 			// (text before tool calls, between tool calls, and final text)
 			const isCancelled = () => !this.isCurrentGeneration(contextKey, gen);
-			const result = await this.runner.process(message, {
-				agentConfig: agent,
-				contextKey,
-				customTools,
-			}, {
-				onTextBlock: (text) => {
-					// Suppress output if this run was superseded
-					if (isCancelled()) return;
-
-					const msgNum = messagesSent + 1;
-					console.log(
-						`   📤 Message ${msgNum}: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`,
-					);
-					const replyTo = msgNum === 1 ? message.id : undefined;
-					const sendPromise = provider
-						.send({
-							chatId: message.chatId,
-							text,
-							replyTo,
-						})
-						.then(() => {
-							this.emitRuntimeEvent({
-								source: "pion",
-								contextKey,
-								type: "runtime_output_sent",
-								provider: message.provider,
-								chatId: message.chatId,
-								replyTo,
-								text,
-							});
-						})
-						.catch((err) => {
-							console.error(`   ✗ Message ${msgNum} failed:`, err);
-						});
-					pendingSends.push(sendPromise);
-					messagesSent++;
+			const result = await this.runner.process(
+				message,
+				{
+					agentConfig: agent,
+					contextKey,
+					customTools,
 				},
-				isCancelled,
-			});
+				{
+					onTextBlock: (text) => {
+						// Suppress output if this run was superseded
+						if (isCancelled()) return;
+
+						const msgNum = messagesSent + 1;
+						console.log(
+							`   📤 Message ${msgNum}: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`,
+						);
+						const replyTo = msgNum === 1 ? message.id : undefined;
+						const sendPromise = provider
+							.send({
+								chatId: message.chatId,
+								text,
+								replyTo,
+							})
+							.then(() => {
+								this.emitRuntimeEvent({
+									source: "pion",
+									contextKey,
+									type: "runtime_output_sent",
+									provider: message.provider,
+									chatId: message.chatId,
+									replyTo,
+									text,
+								});
+							})
+							.catch((err) => {
+								console.error(`   ✗ Message ${msgNum} failed:`, err);
+							});
+						pendingSends.push(sendPromise);
+						messagesSent++;
+					},
+					isCancelled,
+				},
+			);
 
 			await Promise.all(pendingSends);
 
@@ -649,7 +653,7 @@ class Daemon {
 					const summary = await this.compactor.summarize(sessionFile, cmd.args || undefined);
 
 					// Prime new session with summary
-					this.runner.primeSessionWithSummary(contextKey, summary);
+					this.runner.primeSessionWithSummary(contextKey, summary, agent?.cwd ?? agent?.workspace);
 
 					await provider.send({
 						chatId,
@@ -662,8 +666,13 @@ class Daemon {
 				case "settings": {
 					const sessionFile = this.runner.getSessionFile(contextKey);
 					const hasSession = existsSync(sessionFile);
-					const isBusy = this.runner.isStreaming(contextKey) || this.processingContexts.has(contextKey);
-					const status = isBusy ? "⚙️ processing" : hasSession ? "💬 session active" : "🆕 no session yet";
+					const isBusy =
+						this.runner.isStreaming(contextKey) || this.processingContexts.has(contextKey);
+					const status = isBusy
+						? "⚙️ processing"
+						: hasSession
+							? "💬 session active"
+							: "🆕 no session yet";
 					const settingsText = [
 						"**Runner controls**",
 						"",

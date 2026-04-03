@@ -2,9 +2,9 @@ import { describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { RuntimeEventBus, type RuntimeEvent } from "../../src/core/runtime-events.js";
-import type { StatusHandle } from "../../src/providers/types.js";
+import { type RuntimeEvent, RuntimeEventBus } from "../../src/core/runtime-events.js";
 import { TelegramStatusSink } from "../../src/providers/telegram-status.js";
+import type { StatusHandle, StatusUpdate } from "../../src/providers/types.js";
 
 function makeHandle(): StatusHandle {
 	return {
@@ -28,13 +28,26 @@ function makeProcessingStart(): RuntimeEvent {
 	};
 }
 
+type StatusProvider = ConstructorParameters<typeof TelegramStatusSink>[0];
+type MessageUpdateRuntimeEvent = Extract<RuntimeEvent, { source: "pi"; type: "message_update" }>;
+
+function makeStatusProvider(overrides: Partial<StatusProvider> = {}): StatusProvider {
+	return {
+		upsertStatus: async (_status: StatusUpdate) => makeHandle(),
+		clearStatus: async (_handle: StatusHandle) => {},
+		...overrides,
+	};
+}
+
 describe("TelegramStatusSink", () => {
 	test("creates a status message when processing starts in telegram", async () => {
-		const upsertStatus = mock(async () => makeHandle());
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (_status: StatusUpdate) => makeHandle());
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 
@@ -48,11 +61,13 @@ describe("TelegramStatusSink", () => {
 
 	test("appends compact tool call summaries as emoji-prefixed code lines", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -108,11 +123,13 @@ describe("TelegramStatusSink", () => {
 
 	test("truncates long tool call paths to keep the useful tail in code formatting", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -142,11 +159,13 @@ describe("TelegramStatusSink", () => {
 
 	test("hides thinking updates from the rendered status", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -161,9 +180,13 @@ describe("TelegramStatusSink", () => {
 				message: {
 					role: "assistant",
 					content: [{ type: "text", text: "thinking through it" }],
-				} as any,
-				assistantMessageEvent: { type: "text_delta", delta: "thinking through it", contentIndex: 0 } as any,
-			},
+				} as unknown as MessageUpdateRuntimeEvent["event"]["message"],
+				assistantMessageEvent: {
+					type: "text_delta",
+					delta: "thinking through it",
+					contentIndex: 0,
+				} as unknown as MessageUpdateRuntimeEvent["event"]["assistantMessageEvent"],
+			} as unknown as MessageUpdateRuntimeEvent["event"],
 		});
 
 		expect(upsertStatus).toHaveBeenCalledTimes(1);
@@ -171,11 +194,13 @@ describe("TelegramStatusSink", () => {
 
 	test("keeps tool history when tool execution ends", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -219,11 +244,13 @@ describe("TelegramStatusSink", () => {
 
 	test("shows omitted count when tool history exceeds the visible limit", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		for (let index = 1; index <= 12; index++) {
@@ -254,12 +281,14 @@ describe("TelegramStatusSink", () => {
 
 	test("clears the status message when processing completes by default", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const clearStatus = mock(async () => {});
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus,
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus,
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -279,12 +308,14 @@ describe("TelegramStatusSink", () => {
 
 	test("shows a failure state before clearing on failed completion", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const clearStatus = mock(async () => {});
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus,
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus,
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -310,13 +341,13 @@ describe("TelegramStatusSink", () => {
 
 	test("keeps the final status message when clearOnComplete is disabled", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const clearStatus = mock(async () => {});
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
 		const sink = new TelegramStatusSink(
-			{
+			makeStatusProvider({
 				upsertStatus,
 				clearStatus,
-			} as any,
+			}),
 			{ clearOnComplete: false },
 		);
 
@@ -357,11 +388,13 @@ describe("TelegramStatusSink", () => {
 
 	test("truncates long bash commands from the end instead of the start", async () => {
 		const handle = makeHandle();
-		const upsertStatus = mock(async (status: any) => status.handle ?? handle);
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
@@ -394,13 +427,15 @@ describe("TelegramStatusSink", () => {
 	test("can subscribe to the runtime bus and react to emitted events", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "pion-telegram-status-"));
 		try {
-			const upsertStatus = mock(async (status: any) => status.handle ?? makeHandle());
-			const clearStatus = mock(async () => {});
+			const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? makeHandle());
+			const clearStatus = mock(async (_handle: StatusHandle) => {});
 			const bus = new RuntimeEventBus(dataDir);
-			const sink = new TelegramStatusSink({
-				upsertStatus,
-				clearStatus,
-			} as any);
+			const sink = new TelegramStatusSink(
+				makeStatusProvider({
+					upsertStatus,
+					clearStatus,
+				}),
+			);
 
 			const unsubscribe = sink.attach(bus);
 			bus.emit({

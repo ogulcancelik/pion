@@ -115,16 +115,16 @@ export class MessageDebouncer {
  * - Media: collected from all messages
  */
 export function mergeMessages(messages: Message[]): Message {
-	if (messages.length === 0) {
+	const [first] = messages;
+	const last = messages.at(-1);
+
+	if (!first || !last) {
 		throw new Error("Cannot merge empty message array");
 	}
 
 	if (messages.length === 1) {
-		return messages[0]!;
+		return first;
 	}
-
-	const first = messages[0]!;
-	const last = messages[messages.length - 1]!;
 
 	return {
 		...first,

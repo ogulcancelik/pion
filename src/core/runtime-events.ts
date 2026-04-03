@@ -166,7 +166,10 @@ export class RuntimeEventBus {
 			timestamp: event.timestamp ?? new Date().toISOString(),
 		} as RuntimeEvent;
 
-		appendFileSync(this.getEventLogFile(stampedEvent.contextKey), `${JSON.stringify(stampedEvent)}\n`);
+		appendFileSync(
+			this.getEventLogFile(stampedEvent.contextKey),
+			`${JSON.stringify(stampedEvent)}\n`,
+		);
 
 		for (const listener of this.listeners) {
 			listener(stampedEvent);
