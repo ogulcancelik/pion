@@ -167,7 +167,7 @@ describe("Daemon components", () => {
 			// Example config has contact: "+1234567890" → main
 			const result = router.route({
 				id: "3",
-				provider: "whatsapp",
+				provider: "telegram",
 				chatId: "direct-chat",
 				senderId: "+1234567890",
 				text: "hi",

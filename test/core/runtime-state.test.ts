@@ -52,8 +52,8 @@ describe("DaemonRuntimeState", () => {
 			firstRun.trackContextStart(makeContext());
 			firstRun.trackContextStart(
 				makeContext({
-					contextKey: "whatsapp:chat:abc",
-					provider: "whatsapp",
+					contextKey: "telegram:chat:abc",
+					provider: "telegram",
 					chatId: "abc",
 				}),
 			);

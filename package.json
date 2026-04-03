@@ -9,7 +9,6 @@
     "start": "bun run src/daemon.ts",
     "daemon": "bun run src/daemon.ts",
     "login": "bun run scripts/login.ts",
-    "whatsapp:pair": "bun run scripts/whatsapp-pair.ts",
     "test": "bun test",
     "test:watch": "bun test --watch",
     "typecheck": "tsc --noEmit",
@@ -23,10 +22,8 @@
     "@mariozechner/pi-ai": "0.64.0",
     "@mariozechner/pi-coding-agent": "0.64.0",
     "@mariozechner/pi-tui": "0.64.0",
-    "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "grammy": "^1.39.2",
     "markdown-it": "^14.1.0",
-    "qrcode-terminal": "^0.12.0",
     "yaml": "^2.7.0"
   },
   "devDependencies": {

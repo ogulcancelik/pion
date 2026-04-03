@@ -45,8 +45,8 @@ describe("Runner", () => {
 		});
 
 		test("converts slashes to hyphens", () => {
-			const result = runner.getSessionFile("whatsapp/chat/group-xyz");
-			expect(result).toBe(join(testDir, "sessions", "whatsapp-chat-group-xyz.jsonl"));
+			const result = runner.getSessionFile("telegram/chat/group-xyz");
+			expect(result).toBe(join(testDir, "sessions", "telegram-chat-group-xyz.jsonl"));
 		});
 
 		test("converts backslashes to hyphens", () => {

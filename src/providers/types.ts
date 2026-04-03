@@ -30,7 +30,7 @@ export interface ActionMessage {
 	raw: unknown;
 }
 
-export type ProviderType = "telegram" | "whatsapp";
+export type ProviderType = "telegram";
 
 export interface MediaAttachment {
 	type: "image" | "video" | "audio" | "document";
@@ -95,7 +95,7 @@ export interface StatusUpdate {
 }
 
 /**
- * Provider interface - implemented by Telegram, WhatsApp, etc.
+ * Provider interface - currently implemented by Telegram.
  */
 export interface Provider {
 	readonly type: ProviderType;

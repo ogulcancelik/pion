@@ -11,12 +11,12 @@ describe("recovery notifications", () => {
 		const targets: RecoveryNotificationTarget[] = [
 			{ provider: "telegram", chatId: "123", contextKey: "telegram:contact:123" },
 			{ provider: "telegram", chatId: "123", contextKey: "telegram:chat:123" },
-			{ provider: "whatsapp", chatId: "abc", contextKey: "whatsapp:chat:abc" },
+			{ provider: "telegram", chatId: "456", contextKey: "telegram:chat:456" },
 		];
 
 		expect(dedupeRecoveryTargets(targets)).toEqual([
 			{ provider: "telegram", chatId: "123", contextKey: "telegram:contact:123" },
-			{ provider: "whatsapp", chatId: "abc", contextKey: "whatsapp:chat:abc" },
+			{ provider: "telegram", chatId: "456", contextKey: "telegram:chat:456" },
 		]);
 	});
 

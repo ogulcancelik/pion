@@ -121,10 +121,10 @@ describe("Router", () => {
 		});
 		const router = new Router(config);
 
-		const msg = makeMessage({ chatId: "group-123", isGroup: true, provider: "whatsapp" });
+		const msg = makeMessage({ chatId: "group-123", isGroup: true, provider: "telegram" });
 		const result = router.route(msg);
 
-		expect(result.contextKey).toBe("whatsapp:chat:group-123");
+		expect(result.contextKey).toBe("telegram:chat:group-123");
 	});
 
 	test("builds correct context key for per-contact isolation", () => {

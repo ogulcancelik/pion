@@ -1,13 +1,12 @@
 # Pion
 
-A messaging bridge connecting WhatsApp and Telegram to [pi-agent](https://github.com/badlogic/pi-mono).
+A messaging bridge connecting Telegram to [pi-agent](https://github.com/badlogic/pi-mono).
 
 > **pion** /ˈpaɪɒn/ — a subatomic particle that mediates forces between others. Like this project mediates messages.
 
 ## Features
 
 - **Telegram** — text, photos, stickers, files, long messages sent as `.md` documents
-- **WhatsApp** — QR pairing, allowlist filtering for DMs and groups
 - **Routing** — per-chat or per-contact isolation, match by type/contact/group
 - **Sessions** — JSONL persistence, archiving, context usage warnings (85%/95%)
 - **Workspace** — SOUL.md, IDENTITY.md, USER.md, MEMORY.md, memory/ directory
@@ -35,9 +34,6 @@ bun install
 # Copy example config and edit
 cp pion.example.yaml ~/.pion/config.yaml
 $EDITOR ~/.pion/config.yaml
-
-# For WhatsApp, pair first
-bun run whatsapp:pair
 
 # Start the daemon
 bun run start
@@ -93,7 +89,6 @@ Keybindings: `Ctrl+T` toggle thinking blocks, `Ctrl+O` toggle tool expansion.
 ├── sessions/                (JSONL conversation history)
 │   └── archive/             (archived sessions from /new)
 ├── skills/                  (skill definitions)
-├── whatsapp-auth/           (baileys auth state)
 └── agents/
     └── main/
         ├── SOUL.md
@@ -112,7 +107,6 @@ You can override the auth location with `authPath` in `~/.pion/config.yaml`.
 bun run dev              # watch mode
 bun run start            # run daemon
 bun run monitor          # session monitor TUI
-bun run whatsapp:pair    # WhatsApp QR pairing
 bun test                 # run tests
 bun run lint             # biome check
 bun run typecheck        # tsc --noEmit
@@ -123,7 +117,7 @@ bun run typecheck        # tsc --noEmit
 ```
 ┌─────────────┐     ┌──────────┐     ┌─────────────┐
 │  Providers  │────▶│  Router  │────▶│   Runner    │
-│  (WA/TG)    │     │          │     │  (pi-agent) │
+│  (Telegram) │     │          │     │  (pi-agent) │
 └─────────────┘     └──────────┘     └─────────────┘
        │                 │                  │
        ▼                 ▼                  ▼

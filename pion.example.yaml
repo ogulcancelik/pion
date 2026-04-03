@@ -8,9 +8,6 @@ telegram:
   # status:
   #   clearOnComplete: true
 
-whatsapp:
-  sessionDir: "~/.pion/whatsapp-session"
-
 # Optional: override auth storage path.
 # Default is ~/.pion/auth.json.
 # File format is compatible with pi auth.json.

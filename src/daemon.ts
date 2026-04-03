@@ -39,7 +39,6 @@ import { createTelegramTools } from "./providers/telegram-tools.js";
 import { TelegramProvider } from "./providers/telegram.js";
 import { TelegramStatusSink } from "./providers/telegram-status.js";
 import type { ActionMessage, Message, Provider } from "./providers/types.js";
-import { WhatsAppProvider } from "./providers/whatsapp.js";
 
 const DEFAULT_DEBOUNCE_MS = 5000;
 
@@ -159,41 +158,6 @@ class Daemon {
 					text: startupText,
 				});
 				console.log("✓ Startup notification sent");
-			}
-		}
-
-		// Start WhatsApp if configured
-		if (this.config.whatsapp) {
-			const authDir = this.config.whatsapp.sessionDir
-				? expandTilde(this.config.whatsapp.sessionDir)
-				: `${homeDir()}/.pion/whatsapp-auth`;
-
-			// Check if paired (creds.json exists)
-			const credsFile = `${authDir}/creds.json`;
-			if (!existsSync(credsFile)) {
-				console.log("⚠ WhatsApp not paired. Run: bun run whatsapp:pair");
-			} else {
-				const whatsapp = new WhatsAppProvider({
-					authDir,
-					printQRInTerminal: false, // Don't print QR in daemon
-					allowDMs: this.config.whatsapp.allowDMs,
-					allowGroups: this.config.whatsapp.allowGroups,
-				});
-				whatsapp.onMessage((msg) => this.handleMessage(msg));
-
-				console.log("📱 Connecting to WhatsApp...");
-				try {
-					await whatsapp.start();
-					this.providers.push(whatsapp);
-
-					const dmCount = this.config.whatsapp.allowDMs?.length ?? 0;
-					const groupCount = this.config.whatsapp.allowGroups?.length ?? 0;
-					console.log(`✓ WhatsApp connected (${dmCount} DMs, ${groupCount} groups allowed)`);
-				} catch (err) {
-					const msg = err instanceof Error ? err.message : "Unknown error";
-					console.error(`✗ WhatsApp failed to connect: ${msg}`);
-					console.log("  Try re-pairing: bun run whatsapp:pair");
-				}
 			}
 		}
 

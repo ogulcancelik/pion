@@ -14,7 +14,6 @@ export interface Config {
 	 *  Set to 0 to disable debouncing. */
 	debounceMs?: number;
 	telegram?: TelegramConfig;
-	whatsapp?: WhatsAppConfig;
 	agents: Record<string, AgentConfig>;
 	routes: Route[];
 }
@@ -28,15 +27,6 @@ export interface TelegramConfig {
 		/** Clear the live status message when a run completes (default: true) */
 		clearOnComplete?: boolean;
 	};
-}
-
-export interface WhatsAppConfig {
-	/** Directory to store auth session */
-	sessionDir?: string;
-	/** Allowed phone numbers for DMs (e.g., ["+1234567890"]) */
-	allowDMs?: string[];
-	/** Allowed group JIDs (e.g., ["120363403098358590@g.us"]) */
-	allowGroups?: string[];
 }
 
 export interface AgentConfig {

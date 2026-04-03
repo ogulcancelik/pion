@@ -391,28 +391,6 @@ describe("TelegramStatusSink", () => {
 		expect(upsertStatus.mock.calls[1]?.[0]?.text).toContain("…`");
 	});
 
-	test("ignores non-telegram runtime events", async () => {
-		const upsertStatus = mock(async () => makeHandle());
-		const sink = new TelegramStatusSink({
-			upsertStatus,
-			clearStatus: mock(async () => {}),
-		} as any);
-
-		await sink.handleEvent({
-			id: "evt-4",
-			timestamp: "2026-04-02T21:00:00.000Z",
-			source: "pion",
-			contextKey: "whatsapp:contact:user-1",
-			type: "runtime_processing_start",
-			agentName: "main",
-			provider: "whatsapp",
-			chatId: "chat-2",
-			messageId: "msg-2",
-		});
-
-		expect(upsertStatus).not.toHaveBeenCalled();
-	});
-
 	test("can subscribe to the runtime bus and react to emitted events", async () => {
 		const dataDir = mkdtempSync(join(tmpdir(), "pion-telegram-status-"));
 		try {
