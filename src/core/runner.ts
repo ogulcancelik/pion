@@ -15,6 +15,7 @@ import { getAuthPath } from "./auth.js";
 import { prepareInboundMessage } from "./inbound.js";
 import { expandTilde, homeDir } from "./paths.js";
 import { PionResourceLoader } from "./pion-resource-loader.js";
+import { createRecallTools } from "./recall-tools.js";
 import {
 	type RuntimeEvent,
 	RuntimeEventBus,
@@ -34,6 +35,8 @@ export interface RunnerConfig {
 	authPath?: string;
 	/** Directory containing skills (default: ~/.pion/skills) */
 	skillsDir?: string;
+	/** Optional global model override for session recall queries. */
+	recallQueryModel?: string;
 	/** Shared runtime event bus for Pi SDK + daemon events */
 	runtimeEventBus?: RuntimeEventBus;
 }
@@ -220,6 +223,7 @@ export class Runner {
 	private authStorage: AuthStorage;
 	private modelRegistry: ModelRegistry;
 	private runtimeEventBus: RuntimeEventBus;
+	private recallQueryModel?: string;
 	private sessions: Map<string, RunnerSession> = new Map();
 	private warningState: Map<string, WarningState> = new Map();
 
@@ -238,6 +242,7 @@ export class Runner {
 		const modelsJsonPath = join(this.dataDir, "agents/main/models.json");
 		this.modelRegistry = ModelRegistry.create(this.authStorage, modelsJsonPath);
 		this.runtimeEventBus = config.runtimeEventBus ?? new RuntimeEventBus(this.dataDir);
+		this.recallQueryModel = config.recallQueryModel;
 	}
 
 	/**
@@ -328,6 +333,7 @@ export class Runner {
 			skillsDir: this.skillsDir,
 			modelRegistry: this.modelRegistry,
 			runtimeEventBus: this.runtimeEventBus,
+			recallQueryModel: this.recallQueryModel,
 			customTools: context.customTools,
 		});
 	}
@@ -499,6 +505,7 @@ interface RunnerSessionConfig {
 	skillsDir: string;
 	modelRegistry: ModelRegistry;
 	runtimeEventBus: RuntimeEventBus;
+	recallQueryModel?: string;
 	customTools?: ToolDefinition[];
 }
 
@@ -702,14 +709,20 @@ class RunnerSession {
 		this.sessionManager = sessionManager;
 
 		// Create the agent session
+		const recallTools = createRecallTools({
+			searchSessionMessages: (query, limit) =>
+				this.config.runtimeEventBus.searchSessionMessages(query, limit),
+			recallQueryModel: this.config.recallQueryModel,
+		});
+
 		const result = await createAgentSession({
 			model,
 			cwd: resolvedCwd,
 			sessionManager,
 			modelRegistry: this.config.modelRegistry,
 			resourceLoader: new PionResourceLoader(this.config.agentConfig, this.config.skillsDir),
-			// Custom tools (e.g., Telegram sticker tool)
-			customTools: this.config.customTools,
+			// Custom tools (e.g., Telegram sticker tool) + native recall tools
+			customTools: [...(this.config.customTools ?? []), ...recallTools],
 		});
 
 		this.agentSession = result.session;

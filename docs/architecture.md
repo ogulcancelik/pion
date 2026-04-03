@@ -173,6 +173,7 @@ This means the agent always sees the user's complete thought, not fragments.
 
 dataDir: ~/.pion             # Where sessions and agents live (default)
 skillsDir: ~/.pion/skills    # Where skills are loaded from (default)
+recallQueryModel: anthropic/claude-haiku-4-5  # Optional global recall/query model override
 debounceMs: 5000             # Message debounce window (default: 5000, 0 to disable)
 
 telegram:

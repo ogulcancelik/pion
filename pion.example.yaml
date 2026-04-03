@@ -18,6 +18,10 @@ telegram:
 # Set to 0 to disable debouncing.
 # debounceMs: 5000
 
+# Optional global model override for session recall queries.
+# By default, session_query uses the current session model.
+# recallQueryModel: "anthropic/claude-haiku-4-5"
+
 # Agent definitions
 agents:
   main:

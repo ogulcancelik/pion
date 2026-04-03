@@ -86,6 +86,7 @@ class Daemon {
 			dataDir: config.dataDir,
 			skillsDir: config.skillsDir,
 			authPath: config.authPath,
+			recallQueryModel: config.recallQueryModel,
 			runtimeEventBus: this.runtimeEvents,
 		});
 		this.commands = new Commands();

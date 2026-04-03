@@ -59,7 +59,7 @@ describe("TelegramStatusSink", () => {
 		});
 	});
 
-	test("appends compact tool call summaries as emoji-prefixed code lines", async () => {
+	test("appends compact tool call summaries with tool names and key params", async () => {
 		const handle = makeHandle();
 		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
 		const sink = new TelegramStatusSink(
@@ -116,7 +116,7 @@ describe("TelegramStatusSink", () => {
 		expect(upsertStatus.mock.calls[3]?.[0]).toEqual({
 			chatId: "chat-1",
 			handle,
-			text: "⚙️ working\n\n📖 `docs/architecture.md`\n📖 `src/core/runner.ts`\n⌘ `rg -n runner src`",
+			text: "⚙️ working\n\n📖 read · `docs/architecture.md`\n📖 read · `src/core/runner.ts`\n⌘ bash · `rg -n runner src`",
 			actions: [],
 		});
 	});
@@ -152,7 +152,58 @@ describe("TelegramStatusSink", () => {
 		expect(upsertStatus.mock.calls[1]?.[0]).toEqual({
 			chatId: "chat-1",
 			handle,
-			text: expect.stringContaining("📖 `…/with/a/long/name/telegram-status.ts`"),
+			text: expect.stringContaining("📖 read · `…/with/a/long/name/telegram-status.ts`"),
+			actions: [],
+		});
+	});
+
+	test("shows recall tool query and question params in status bubbles", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-search",
+			timestamp: "2026-04-02T21:00:01.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-search",
+				toolName: "session_search",
+				args: { query: "cloudflare auth callback" },
+			},
+		});
+		await sink.handleEvent({
+			id: "evt-query",
+			timestamp: "2026-04-02T21:00:02.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-query",
+				toolName: "session_query",
+				args: {
+					sessionPath: "/home/can/.pion/sessions/telegram-contact-123.jsonl",
+					question: "what did we decide about auth?",
+				},
+			},
+		});
+
+		expect(upsertStatus.mock.calls[2]?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: "⚙️ working\n\n🔎 session search · `cloudflare auth callback`\n🧠 session query · `what did we decide about auth?`",
 			actions: [],
 		});
 	});
@@ -237,7 +288,7 @@ describe("TelegramStatusSink", () => {
 		expect(upsertStatus.mock.calls[1]?.[0]).toEqual({
 			chatId: "chat-1",
 			handle,
-			text: "⚙️ working\n\n📖 `docs/architecture.md`",
+			text: "⚙️ working\n\n📖 read · `docs/architecture.md`",
 			actions: [],
 		});
 	});
@@ -274,7 +325,7 @@ describe("TelegramStatusSink", () => {
 		expect(latest).toEqual({
 			chatId: "chat-1",
 			handle,
-			text: "⚙️ working\n\n… 2 earlier tool calls\n📖 `file-3.ts`\n📖 `file-4.ts`\n📖 `file-5.ts`\n📖 `file-6.ts`\n📖 `file-7.ts`\n📖 `file-8.ts`\n📖 `file-9.ts`\n📖 `file-10.ts`\n📖 `file-11.ts`\n📖 `file-12.ts`",
+			text: "⚙️ working\n\n… 2 earlier tool calls\n📖 read · `file-3.ts`\n📖 read · `file-4.ts`\n📖 read · `file-5.ts`\n📖 read · `file-6.ts`\n📖 read · `file-7.ts`\n📖 read · `file-8.ts`\n📖 read · `file-9.ts`\n📖 read · `file-10.ts`\n📖 read · `file-11.ts`\n📖 read · `file-12.ts`",
 			actions: [],
 		});
 	});
@@ -339,9 +390,174 @@ describe("TelegramStatusSink", () => {
 		expect(clearStatus).toHaveBeenCalledTimes(1);
 	});
 
-	test("keeps the final status message when clearOnComplete is disabled", async () => {
-		const handle = makeHandle();
-		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+	test("creates a new status bubble for later tool calls after assistant output is sent", async () => {
+		const handles = [
+			{ provider: "telegram", chatId: "chat-1", messageId: "42" },
+			{ provider: "telegram", chatId: "chat-1", messageId: "43" },
+		] as const;
+		let nextHandle = 0;
+		const upsertStatus = mock(async (status: StatusUpdate) => {
+			if (status.handle) {
+				return status.handle;
+			}
+			const handle = handles[nextHandle];
+			nextHandle += 1;
+			if (!handle) {
+				throw new Error("missing status handle");
+			}
+			return handle;
+		});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+			{ clearOnComplete: false },
+		);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-tool-start-1",
+			timestamp: "2026-04-02T21:00:01.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-1",
+				toolName: "read",
+				args: { path: "src/first.ts" },
+			},
+		});
+		await sink.handleEvent({
+			id: "evt-output",
+			timestamp: "2026-04-02T21:00:02.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_output_sent",
+			provider: "telegram",
+			chatId: "chat-1",
+			text: "Let me try a broader search:",
+		});
+		await sink.handleEvent({
+			id: "evt-tool-start-2",
+			timestamp: "2026-04-02T21:00:03.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-2",
+				toolName: "read",
+				args: { path: "src/second.ts" },
+			},
+		});
+
+		expect(upsertStatus.mock.calls[2]?.[0]).toEqual({
+			chatId: "chat-1",
+			text: "⚙️ working\n\n📖 read · `src/second.ts`",
+			actions: [],
+		});
+	});
+
+	test("clears all status bubbles from a run when clearOnComplete is enabled", async () => {
+		const handles = [
+			{ provider: "telegram", chatId: "chat-1", messageId: "42" },
+			{ provider: "telegram", chatId: "chat-1", messageId: "43" },
+		] as const;
+		let nextHandle = 0;
+		const upsertStatus = mock(async (status: StatusUpdate) => {
+			if (status.handle) {
+				return status.handle;
+			}
+			const handle = handles[nextHandle];
+			nextHandle += 1;
+			if (!handle) {
+				throw new Error("missing status handle");
+			}
+			return handle;
+		});
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus,
+			}),
+		);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-tool-start-1",
+			timestamp: "2026-04-02T21:00:01.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-1",
+				toolName: "read",
+				args: { path: "src/first.ts" },
+			},
+		});
+		await sink.handleEvent({
+			id: "evt-output",
+			timestamp: "2026-04-02T21:00:02.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_output_sent",
+			provider: "telegram",
+			chatId: "chat-1",
+			text: "Let me try a broader search:",
+		});
+		await sink.handleEvent({
+			id: "evt-tool-start-2",
+			timestamp: "2026-04-02T21:00:03.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-2",
+				toolName: "read",
+				args: { path: "src/second.ts" },
+			},
+		});
+		await sink.handleEvent({
+			id: "evt-complete",
+			timestamp: "2026-04-02T21:00:05.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_processing_complete",
+			outcome: "completed",
+			messagesSent: 2,
+			responseLength: 123,
+		});
+
+		expect(clearStatus).toHaveBeenCalledTimes(2);
+		expect(clearStatus.mock.calls).toEqual([[handles[0]], [handles[1]]]);
+	});
+
+	test("keeps all status bubbles from a run when clearOnComplete is disabled", async () => {
+		const handles = [
+			{ provider: "telegram", chatId: "chat-1", messageId: "42" },
+			{ provider: "telegram", chatId: "chat-1", messageId: "43" },
+		] as const;
+		let nextHandle = 0;
+		const upsertStatus = mock(async (status: StatusUpdate) => {
+			if (status.handle) {
+				return status.handle;
+			}
+			const handle = handles[nextHandle];
+			nextHandle += 1;
+			if (!handle) {
+				throw new Error("missing status handle");
+			}
+			return handle;
+		});
 		const clearStatus = mock(async (_handle: StatusHandle) => {});
 		const sink = new TelegramStatusSink(
 			makeStatusProvider({
@@ -353,7 +569,7 @@ describe("TelegramStatusSink", () => {
 
 		await sink.handleEvent(makeProcessingStart());
 		await sink.handleEvent({
-			id: "evt-tool-start",
+			id: "evt-tool-start-1",
 			timestamp: "2026-04-02T21:00:01.000Z",
 			source: "pi",
 			contextKey: "telegram:contact:user-1",
@@ -367,21 +583,44 @@ describe("TelegramStatusSink", () => {
 			},
 		});
 		await sink.handleEvent({
+			id: "evt-output",
+			timestamp: "2026-04-02T21:00:02.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_output_sent",
+			provider: "telegram",
+			chatId: "chat-1",
+			text: "Let me try a broader search:",
+		});
+		await sink.handleEvent({
+			id: "evt-tool-start-2",
+			timestamp: "2026-04-02T21:00:03.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-2",
+				toolName: "read",
+				args: { path: "src/second.ts" },
+			},
+		});
+		await sink.handleEvent({
 			id: "evt-complete",
 			timestamp: "2026-04-02T21:00:05.000Z",
 			source: "pion",
 			contextKey: "telegram:contact:user-1",
 			type: "runtime_processing_complete",
 			outcome: "completed",
-			messagesSent: 1,
+			messagesSent: 2,
 			responseLength: 123,
 		});
 
 		expect(clearStatus).not.toHaveBeenCalled();
 		expect(upsertStatus.mock.calls.at(-1)?.[0]).toEqual({
 			chatId: "chat-1",
-			handle,
-			text: "⚙️ working\n\n⌘ `ls -la ~/Projects/pi-mono`",
+			text: "⚙️ working\n\n📖 read · `src/second.ts`",
 			actions: [],
 		});
 	});
@@ -419,9 +658,9 @@ describe("TelegramStatusSink", () => {
 		expect(upsertStatus.mock.calls[1]?.[0]?.handle).toEqual(handle);
 		expect(upsertStatus.mock.calls[1]?.[0]?.actions).toEqual([]);
 		expect(upsertStatus.mock.calls[1]?.[0]?.text).toContain(
-			'⌘ `find ~/Projects/pi-mono -type f -name "',
+			'⌘ bash · `find ~/Projects/pi-mono -type f -name "',
 		);
-		expect(upsertStatus.mock.calls[1]?.[0]?.text).toContain("…`");
+		expect(upsertStatus.mock.calls[1]?.[0]?.text).toContain("…");
 	});
 
 	test("can subscribe to the runtime bus and react to emitted events", async () => {

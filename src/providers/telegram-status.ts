@@ -16,6 +16,8 @@ interface TelegramStatusState {
 	statusLine: string;
 	toolLines: string[];
 	lastRenderedText?: string;
+	sealedAfterAssistantOutput: boolean;
+	handlesSeen: StatusHandle[];
 }
 
 const MAX_VISIBLE_TOOL_LINES = 10;
@@ -51,18 +53,66 @@ function codeSpan(value: string): string {
 	return `${delimiter}${value}${delimiter}`;
 }
 
+function toolLabel(toolName: string): string {
+	return toolName.replaceAll("_", " ");
+}
+
+function toolIcon(toolName: string): string {
+	if (toolName === "read") return "📖";
+	if (toolName === "bash") return "⌘";
+	if (toolName === "session_search") return "🔎";
+	if (toolName === "session_query") return "🧠";
+	return "•";
+}
+
+function formatStatusToolLine(toolName: string, value?: string): string {
+	return value
+		? `${toolIcon(toolName)} ${toolLabel(toolName)} · ${codeSpan(value)}`
+		: `${toolIcon(toolName)} ${toolLabel(toolName)}`;
+}
+
+type ToolStatusSummarizer = (toolName: string, args: Record<string, unknown>) => string | undefined;
+
+const TOOL_STATUS_SUMMARIZERS: Record<string, ToolStatusSummarizer> = {
+	read: (toolName, args) =>
+		typeof args.path === "string"
+			? formatStatusToolLine(toolName, truncateTail(args.path))
+			: undefined,
+	bash: (toolName, args) =>
+		typeof args.command === "string"
+			? formatStatusToolLine(toolName, truncateEnd(args.command, 40))
+			: undefined,
+	session_search: (toolName, args) =>
+		typeof args.query === "string"
+			? formatStatusToolLine(toolName, truncateEnd(args.query, 44))
+			: undefined,
+	session_query: (toolName, args) =>
+		typeof args.question === "string"
+			? formatStatusToolLine(toolName, truncateEnd(args.question, 44))
+			: undefined,
+};
+
 function summarizeToolCall(toolName: string, args: unknown): string {
 	if (args && typeof args === "object") {
 		const value = args as Record<string, unknown>;
-		if (toolName === "read" && typeof value.path === "string") {
-			return `📖 ${codeSpan(truncateTail(value.path))}`;
+		const customSummary = TOOL_STATUS_SUMMARIZERS[toolName]?.(toolName, value);
+		if (customSummary) {
+			return customSummary;
 		}
-		if (toolName === "bash" && typeof value.command === "string") {
-			return `⌘ ${codeSpan(truncateEnd(value.command, 40))}`;
+		if (typeof value.path === "string") {
+			return formatStatusToolLine(toolName, truncateTail(value.path));
+		}
+		if (typeof value.command === "string") {
+			return formatStatusToolLine(toolName, truncateEnd(value.command, 40));
+		}
+		if (typeof value.query === "string") {
+			return formatStatusToolLine(toolName, truncateEnd(value.query, 44));
+		}
+		if (typeof value.question === "string") {
+			return formatStatusToolLine(toolName, truncateEnd(value.question, 44));
 		}
 	}
-	const icon = toolName === "read" ? "📖" : toolName === "bash" ? "⌘" : "•";
-	return `${icon} ${codeSpan(toolName)}`;
+	return toolLabel(toolName);
 }
 
 export class TelegramStatusSink {
@@ -97,6 +147,27 @@ export class TelegramStatusSink {
 			actions: [],
 		});
 		state.lastRenderedText = text;
+		this.recordHandle(state, state.handle);
+	}
+
+	private recordHandle(state: TelegramStatusState, handle: StatusHandle | undefined): void {
+		if (!handle) return;
+		const alreadySeen = state.handlesSeen.some(
+			(existing) =>
+				existing.provider === handle.provider &&
+				existing.chatId === handle.chatId &&
+				existing.messageId === handle.messageId,
+		);
+		if (!alreadySeen) {
+			state.handlesSeen.push(handle);
+		}
+	}
+
+	private startFreshToolPhase(state: TelegramStatusState): void {
+		state.handle = undefined;
+		state.toolLines = [];
+		state.lastRenderedText = undefined;
+		state.sealedAfterAssistantOutput = false;
 	}
 
 	whenIdle(): Promise<void> {
@@ -120,21 +191,33 @@ export class TelegramStatusSink {
 				chatId: event.chatId,
 				statusLine: "⚙️ working",
 				toolLines: [],
+				sealedAfterAssistantOutput: false,
+				handlesSeen: [],
 			};
 			await this.pushStatus(state);
 			this.states.set(event.contextKey, state);
 			return;
 		}
 
+		if (event.type === "runtime_output_sent") {
+			if (event.provider !== "telegram") return;
+			const state = this.states.get(event.contextKey);
+			if (!state) return;
+			state.sealedAfterAssistantOutput = true;
+			return;
+		}
+
 		if (event.type === "runtime_processing_complete") {
 			const state = this.states.get(event.contextKey);
-			if (!state?.handle) return;
-			if (event.outcome === "failed") {
+			if (!state) return;
+			if (event.outcome === "failed" && state.handle) {
 				state.statusLine = `⚠️ failed${event.errorMessage ? ` — ${event.errorMessage}` : ""}`;
 				await this.pushStatus(state);
 			}
 			if (this.options.clearOnComplete) {
-				await this.provider.clearStatus(state.handle);
+				for (const handle of state.handlesSeen) {
+					await this.provider.clearStatus(handle);
+				}
 			}
 			this.states.delete(event.contextKey);
 		}
@@ -149,6 +232,9 @@ export class TelegramStatusSink {
 		}
 
 		if (event.type === "tool_execution_start") {
+			if (state.sealedAfterAssistantOutput) {
+				this.startFreshToolPhase(state);
+			}
 			const toolEvent = event.event as { toolName: string; args?: unknown };
 			state.toolLines.push(summarizeToolCall(toolEvent.toolName, toolEvent.args));
 			await this.pushStatus(state);

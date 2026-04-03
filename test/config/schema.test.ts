@@ -89,6 +89,24 @@ describe("validateConfig", () => {
 		expect(errors).toHaveLength(0);
 	});
 
+	test("accepts global recallQueryModel when it is a string", () => {
+		const errors = validateConfig({
+			recallQueryModel: "anthropic/claude-haiku-4-5",
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test("rejects non-string global recallQueryModel", () => {
+		const errors = validateConfig({
+			recallQueryModel: 123,
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("recallQueryModel must be a string");
+	});
+
 	test("accepts agent cwd override when it is a string", () => {
 		const errors = validateConfig({
 			agents: {
