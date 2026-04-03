@@ -5,14 +5,17 @@ import { join } from "node:path";
 import {
 	Runner,
 	UserFacingError,
-	buildPromptTextWithMediaPaths,
 	buildRuntimeErrorSystemPrompt,
 	classifyRuntimeError,
 	findRetryBranchParentId,
-	materializeMediaAttachments,
 	parseModelString,
-	resolveFetchedImageMimeType,
 } from "../../src/core/runner.js";
+import {
+	buildPromptTextWithMediaPaths,
+	materializeInboundMessage,
+	materializeMediaAttachments,
+	resolveFetchedImageMimeType,
+} from "../../src/core/inbound.js";
 
 describe("Runner", () => {
 	const testDir = join(import.meta.dir, ".test-runner");
@@ -356,7 +359,7 @@ describe("Runner", () => {
 	});
 
 	describe("incoming media handling", () => {
-		test("saves image attachments to disk and references the saved path in prompt text", async () => {
+		test("materializes image attachments as typed local artifacts and references the saved path in prompt text", async () => {
 			const mediaDir = join(testDir, "media");
 			const attachments = await materializeMediaAttachments(
 				{
@@ -376,8 +379,12 @@ describe("Runner", () => {
 			);
 
 			expect(attachments).toHaveLength(1);
-			expect(attachments[0]?.type).toBe("image");
+			expect(attachments[0]?.kind).toBe("image");
+			expect(attachments[0]?.source.provider).toBe("telegram");
+			expect(attachments[0]?.mimeType).toBe("image/png");
+			expect(attachments[0]?.sourceMimeType).toBe("image/png");
 			expect(attachments[0]?.path.endsWith(".png")).toBe(true);
+			expect(attachments[0]?.byteSize).toBe(Buffer.from("fake image bytes").length);
 			expect(existsSync(attachments[0]?.path || "")).toBe(true);
 			expect(buildPromptTextWithMediaPaths("[image]", attachments)).toBe(
 				`[User attached image: ${attachments[0]?.path}]`,
@@ -386,13 +393,41 @@ describe("Runner", () => {
 
 		test("keeps user text and appends one line per saved attachment path", () => {
 			const prompt = buildPromptTextWithMediaPaths("look at these", [
-				{ type: "image", path: "/tmp/one.jpg" },
-				{ type: "image", path: "/tmp/two.png" },
+				{ kind: "image", path: "/tmp/one.jpg", source: { provider: "telegram" } },
+				{ kind: "image", path: "/tmp/two.png", source: { provider: "telegram" } },
 			]);
 
 			expect(prompt).toBe(
 				"look at these\n\n[User attached image: /tmp/one.jpg]\n[User attached image: /tmp/two.png]",
 			);
+		});
+
+		test("materializeInboundMessage keeps the original message fields and adds typed artifacts", async () => {
+			const materialized = await materializeInboundMessage(
+				{
+					id: "msg-envelope-1",
+					chatId: "chat-1",
+					senderId: "user-1",
+					senderName: "Can",
+					text: "can you inspect this",
+					isGroup: false,
+					provider: "telegram",
+					timestamp: new Date("2026-04-02T15:00:30Z"),
+					raw: { native: true },
+					media: [
+						{ type: "image", buffer: Buffer.from("fake image bytes"), mimeType: "image/jpeg" },
+					],
+				},
+				join(testDir, "materialized-envelope"),
+			);
+
+			expect(materialized.id).toBe("msg-envelope-1");
+			expect(materialized.senderName).toBe("Can");
+			expect(materialized.text).toBe("can you inspect this");
+			expect(materialized.attachments).toHaveLength(1);
+			expect(materialized.attachments[0]?.kind).toBe("image");
+			expect(materialized.attachments[0]?.source.provider).toBe("telegram");
+			expect(materialized.attachments[0]?.path).toContain("materialized-envelope");
 		});
 
 		test("runner.process sends attachment paths as text and no inline images", async () => {
@@ -447,6 +482,7 @@ describe("Runner", () => {
 			expect(captured.images).toBeUndefined();
 			expect(captured.text).toContain("can you inspect this");
 			expect(captured.text).toContain("[User attached image:");
+			expect(captured.text).not.toContain("application/octet-stream");
 			const match = captured.text?.match(/\[User attached image: (.+)\]/);
 			expect(match).toBeDefined();
 			expect(match?.[1]?.startsWith(join(tmpdir(), "pion-media"))).toBe(true);
@@ -565,6 +601,46 @@ describe("Runner", () => {
 			expect(prompt).toContain("unsupported image format");
 			expect(prompt).toContain("This note is from the runtime and is not visible to the user");
 			expect(prompt).toContain("Retrying without images.");
+		});
+
+		test("preserves source mime separately from detected image mime when fetching attachments", async () => {
+			const originalFetch = globalThis.fetch;
+			globalThis.fetch = ((async () =>
+				new Response(Buffer.from("img"), {
+					status: 200,
+					headers: { "content-type": "image/png" },
+				})) as unknown) as typeof fetch;
+
+			try {
+				const attachments = await materializeMediaAttachments(
+					{
+						id: "msg-fetch-1",
+						chatId: "chat-1",
+						senderId: "user-1",
+						text: "see this",
+						isGroup: false,
+						provider: "telegram",
+						timestamp: new Date("2026-04-02T15:03:00Z"),
+						raw: {},
+						media: [
+							{
+								type: "image",
+								url: "https://example.com/file",
+								mimeType: "application/octet-stream",
+								fileName: "photo.bin",
+							},
+						],
+					},
+					join(testDir, "media-fetch"),
+				);
+
+				expect(attachments).toHaveLength(1);
+				expect(attachments[0]?.sourceMimeType).toBe("application/octet-stream");
+				expect(attachments[0]?.mimeType).toBe("image/png");
+				expect(attachments[0]?.originalFileName).toBe("photo.bin");
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
 		});
 
 		test("keeps known image mime type when fetch only reports octet-stream", () => {

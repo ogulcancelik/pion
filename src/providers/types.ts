@@ -40,6 +40,23 @@ export interface MediaAttachment {
 	fileName?: string;
 }
 
+export interface MaterializedAttachment {
+	kind: "image" | "video" | "audio" | "document";
+	path: string;
+	mimeType?: string;
+	sourceMimeType?: string;
+	originalFileName?: string;
+	byteSize?: number;
+	source: {
+		provider: ProviderType;
+		url?: string;
+	};
+}
+
+export interface MaterializedMessage extends Omit<Message, "media"> {
+	attachments: MaterializedAttachment[];
+}
+
 /**
  * Outbound message to send via a provider.
  */

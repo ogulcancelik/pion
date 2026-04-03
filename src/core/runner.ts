@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, extname, join } from "node:path";
+import { dirname, join } from "node:path";
 import {
 	AuthStorage,
 	ModelRegistry,
@@ -14,6 +14,7 @@ import type { ResourceLoader } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { getAuthPath } from "./auth.js";
+import { buildPromptTextWithMediaPaths, materializeInboundMessage } from "./inbound.js";
 import { expandTilde, homeDir } from "./paths.js";
 import {
 	createPiRuntimeEvent,
@@ -75,12 +76,6 @@ export interface RunnerProcessOptions {
 	onTextBlock?: (text: string) => void;
 	onEvent?: (event: RuntimeEvent) => void;
 	isCancelled?: () => boolean;
-}
-
-export interface SavedMediaAttachment {
-	type: "image" | "video" | "audio" | "document";
-	path: string;
-	mimeType?: string;
 }
 
 /** Warning state per session */
@@ -189,118 +184,6 @@ export function classifyRuntimeError(
 	return { kind: "rethrow" };
 }
 
-const SUPPORTED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
-const MEDIA_FILE_EXTENSIONS: Record<string, string> = {
-	"image/jpeg": ".jpg",
-	"image/png": ".png",
-	"image/gif": ".gif",
-	"image/webp": ".webp",
-};
-
-function sanitizeFilePart(value: string): string {
-	return value.replace(/[^a-zA-Z0-9._-]/g, "-");
-}
-
-function extensionForMedia(mimeType?: string, fileName?: string): string {
-	const normalizedMimeType = mimeType?.toLowerCase();
-	if (normalizedMimeType && MEDIA_FILE_EXTENSIONS[normalizedMimeType]) {
-		return MEDIA_FILE_EXTENSIONS[normalizedMimeType];
-	}
-	const fileExtension = fileName ? extname(fileName) : "";
-	if (fileExtension) {
-		return fileExtension.toLowerCase();
-	}
-	return ".bin";
-}
-
-export function resolveFetchedImageMimeType(
-	currentMimeType?: string,
-	responseContentType?: string | null,
-): string {
-	const normalizedResponseMimeType = responseContentType?.split(";")[0]?.trim().toLowerCase();
-	if (normalizedResponseMimeType && SUPPORTED_IMAGE_MIME_TYPES.has(normalizedResponseMimeType)) {
-		return normalizedResponseMimeType;
-	}
-	return currentMimeType || "image/jpeg";
-}
-
-export async function materializeMediaAttachments(
-	message: Message,
-	mediaDir: string,
-): Promise<SavedMediaAttachment[]> {
-	if (!message.media || message.media.length === 0) {
-		return [];
-	}
-
-	mkdirSync(mediaDir, { recursive: true });
-	const savedAttachments: SavedMediaAttachment[] = [];
-
-	for (const [index, media] of message.media.entries()) {
-		try {
-			let buffer: Buffer | null = null;
-			let mimeType = media.mimeType;
-
-			if (media.buffer) {
-				buffer = media.buffer;
-			} else if (media.url) {
-				const response = await fetch(media.url);
-				if (!response.ok) {
-					console.warn(`[runner] Failed to fetch media: ${response.status}`);
-					continue;
-				}
-				buffer = Buffer.from(await response.arrayBuffer());
-				if (media.type === "image") {
-					mimeType = resolveFetchedImageMimeType(mimeType, response.headers.get("content-type"));
-				} else {
-					mimeType = response.headers.get("content-type")?.split(";")[0] || mimeType;
-				}
-			} else {
-				continue;
-			}
-
-			const extension = extensionForMedia(mimeType, media.fileName);
-			const rawBaseName = media.fileName
-				? media.fileName.slice(0, media.fileName.length - extname(media.fileName).length)
-				: `${message.timestamp.toISOString()}-${message.id}-${index + 1}`;
-			const baseName = sanitizeFilePart(rawBaseName);
-			const filePath = join(mediaDir, `${baseName}${extension}`);
-			writeFileSync(filePath, buffer);
-			savedAttachments.push({
-				type: media.type,
-				path: filePath,
-				mimeType,
-			});
-		} catch (err) {
-			console.warn("[runner] Failed to store media:", err instanceof Error ? err.message : err);
-		}
-	}
-
-	return savedAttachments;
-}
-
-export function buildPromptTextWithMediaPaths(
-	messageText: string,
-	attachments: SavedMediaAttachment[],
-): string {
-	if (attachments.length === 0) {
-		return messageText;
-	}
-
-	const trimmedText = messageText.trim();
-	const shouldOmitPlaceholder =
-		trimmedText === "[image]" && attachments.every((attachment) => attachment.type === "image");
-	const parts: string[] = [];
-	if (trimmedText && !shouldOmitPlaceholder) {
-		parts.push(messageText);
-	}
-	parts.push(
-		attachments
-			.map((attachment) => `[User attached ${attachment.type}: ${attachment.path}]`)
-			.join("\n"),
-	);
-	return parts.join("\n\n");
-}
-
 export function findRetryBranchParentId(
 	branchEntries: Array<any>,
 ): string | null | undefined {
@@ -405,17 +288,17 @@ export class Runner {
 		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
 		const mediaDir = join(tmpdir(), "pion-media", context.contextKey.replace(/[:/\\]/g, "-"));
-		const savedAttachments = await materializeMediaAttachments(message, mediaDir);
-		if (savedAttachments.length > 0) {
+		const materializedMessage = await materializeInboundMessage(message, mediaDir);
+		if (materializedMessage.attachments.length > 0) {
 			console.log(
-				`[runner] Stored ${savedAttachments.length} attachment(s) for ${context.contextKey}: ${savedAttachments.map((attachment) => attachment.path).join(", ")}`,
+				`[runner] Stored ${materializedMessage.attachments.length} attachment(s) for ${context.contextKey}: ${materializedMessage.attachments.map((attachment) => attachment.path).join(", ")}`,
 			);
 		}
 
 		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
 		const response = await session.prompt(
-			buildPromptTextWithMediaPaths(message.text, savedAttachments),
+			buildPromptTextWithMediaPaths(materializedMessage.text, materializedMessage.attachments),
 			undefined,
 			options,
 		);
