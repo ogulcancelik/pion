@@ -17,6 +17,10 @@
 # Set to 0 to disable debouncing.
 # debounceMs: 5000
 
+# Default timeout for bash tool calls in seconds (default: 300).
+# The bash tool can still override this per call.
+# bashTimeoutSec: 300
+
 # Optional global model override for session_query lookups.
 # If unset, Pion uses the active session model.
 # recallQueryModel: "anthropic/claude-haiku-4-5"

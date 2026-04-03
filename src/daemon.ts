@@ -94,6 +94,7 @@ class Daemon {
 			skillsDir: config.skillsDir,
 			authPath: config.authPath,
 			recallQueryModel: config.recallQueryModel,
+			bashTimeoutSec: config.bashTimeoutSec,
 			runtimeEventBus: this.runtimeEvents,
 		});
 		this.commands = new Commands();

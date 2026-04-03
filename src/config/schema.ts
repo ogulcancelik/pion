@@ -15,6 +15,8 @@ export interface Config {
 	 *  Batches rapid-fire messages into a single prompt.
 	 *  Set to 0 to disable debouncing. */
 	debounceMs?: number;
+	/** Default timeout for bash tool calls in seconds (default: 300). */
+	bashTimeoutSec?: number;
 	telegram?: TelegramConfig;
 	cron?: CronConfig;
 	agents: Record<string, AgentConfig>;
@@ -97,6 +99,14 @@ export function validateConfig(config: unknown): string[] {
 			errors.push("debounceMs must be a finite number");
 		} else if ((cfg.debounceMs as number) < 0) {
 			errors.push("debounceMs must be non-negative");
+		}
+	}
+
+	if (cfg.bashTimeoutSec !== undefined) {
+		if (typeof cfg.bashTimeoutSec !== "number" || !Number.isFinite(cfg.bashTimeoutSec as number)) {
+			errors.push("bashTimeoutSec must be a finite number");
+		} else if ((cfg.bashTimeoutSec as number) <= 0) {
+			errors.push("bashTimeoutSec must be greater than 0");
 		}
 	}
 

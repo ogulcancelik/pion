@@ -89,6 +89,33 @@ describe("validateConfig", () => {
 		expect(errors).toHaveLength(0);
 	});
 
+	test("accepts valid bashTimeoutSec values", () => {
+		const base = {
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		};
+
+		expect(validateConfig({ ...base, bashTimeoutSec: 300 })).toHaveLength(0);
+		expect(validateConfig({ ...base, bashTimeoutSec: 5 })).toHaveLength(0);
+	});
+
+	test("rejects invalid bashTimeoutSec values", () => {
+		const base = {
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		};
+
+		expect(validateConfig({ ...base, bashTimeoutSec: 0 })).toContain(
+			"bashTimeoutSec must be greater than 0",
+		);
+		expect(validateConfig({ ...base, bashTimeoutSec: -1 })).toContain(
+			"bashTimeoutSec must be greater than 0",
+		);
+		expect(validateConfig({ ...base, bashTimeoutSec: "300" })).toContain(
+			"bashTimeoutSec must be a finite number",
+		);
+	});
+
 	test("accepts global recallQueryModel when it is a string", () => {
 		const errors = validateConfig({
 			recallQueryModel: "anthropic/claude-haiku-4-5",

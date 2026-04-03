@@ -3,9 +3,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	AuthStorage,
+	type BashToolDetails,
+	type BashToolInput,
+	type BashToolOptions,
 	ModelRegistry,
 	SessionManager,
 	createAgentSession,
+	createBashToolDefinition,
+	createEditTool,
+	createReadTool,
+	createWriteTool,
 } from "@mariozechner/pi-coding-agent";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -27,6 +34,7 @@ import { resolveAgentCwd } from "./workspace.js";
 /** Warning thresholds for context usage */
 const WARN_THRESHOLD_85 = 85;
 const WARN_THRESHOLD_95 = 95;
+export const DEFAULT_BASH_TIMEOUT_SEC = 300;
 
 export interface RunnerConfig {
 	/** Base data directory (default: ~/.pion) */
@@ -37,6 +45,8 @@ export interface RunnerConfig {
 	skillsDir?: string;
 	/** Optional global model override for session recall queries. */
 	recallQueryModel?: string;
+	/** Default timeout for bash tool calls in seconds. */
+	bashTimeoutSec?: number;
 	/** Shared runtime event bus for Pi SDK + daemon events */
 	runtimeEventBus?: RuntimeEventBus;
 }
@@ -166,6 +176,27 @@ export function classifyRuntimeError(
 	return { kind: "rethrow" };
 }
 
+export function createManagedBashToolDefinition(
+	cwd: string,
+	defaultTimeoutSec = DEFAULT_BASH_TIMEOUT_SEC,
+	options?: BashToolOptions,
+): ReturnType<typeof createBashToolDefinition> {
+	const base = createBashToolDefinition(cwd, options);
+	return {
+		...base,
+		description: `${base.description} If timeout is omitted, it defaults to ${defaultTimeoutSec} seconds in Pion.`,
+		async execute(toolCallId, params: BashToolInput, signal, onUpdate, ctx) {
+			return base.execute(
+				toolCallId,
+				{ ...params, timeout: params.timeout ?? defaultTimeoutSec },
+				signal,
+				onUpdate,
+				ctx,
+			);
+		},
+	};
+}
+
 type RetryBranchEntry = {
 	id?: string;
 	type?: string;
@@ -224,6 +255,7 @@ export class Runner {
 	private modelRegistry: ModelRegistry;
 	private runtimeEventBus: RuntimeEventBus;
 	private recallQueryModel?: string;
+	private bashTimeoutSec: number;
 	private sessions: Map<string, RunnerSession> = new Map();
 	private warningState: Map<string, WarningState> = new Map();
 
@@ -243,6 +275,7 @@ export class Runner {
 		this.modelRegistry = ModelRegistry.create(this.authStorage, modelsJsonPath);
 		this.runtimeEventBus = config.runtimeEventBus ?? new RuntimeEventBus(this.dataDir);
 		this.recallQueryModel = config.recallQueryModel;
+		this.bashTimeoutSec = config.bashTimeoutSec ?? DEFAULT_BASH_TIMEOUT_SEC;
 	}
 
 	/**
@@ -334,6 +367,7 @@ export class Runner {
 			modelRegistry: this.modelRegistry,
 			runtimeEventBus: this.runtimeEventBus,
 			recallQueryModel: this.recallQueryModel,
+			bashTimeoutSec: this.bashTimeoutSec,
 			customTools: context.customTools,
 		});
 	}
@@ -557,6 +591,7 @@ interface RunnerSessionConfig {
 	modelRegistry: ModelRegistry;
 	runtimeEventBus: RuntimeEventBus;
 	recallQueryModel?: string;
+	bashTimeoutSec: number;
 	customTools?: ToolDefinition[];
 }
 
@@ -765,6 +800,10 @@ class RunnerSession {
 				this.config.runtimeEventBus.searchSessionMessages(query, limit),
 			recallQueryModel: this.config.recallQueryModel,
 		});
+		const managedBashTool = createManagedBashToolDefinition(
+			resolvedCwd,
+			this.config.bashTimeoutSec,
+		);
 
 		const result = await createAgentSession({
 			model,
@@ -772,8 +811,17 @@ class RunnerSession {
 			sessionManager,
 			modelRegistry: this.config.modelRegistry,
 			resourceLoader: new PionResourceLoader(this.config.agentConfig, this.config.skillsDir),
-			// Custom tools (e.g., Telegram sticker tool) + native recall tools
-			customTools: [...(this.config.customTools ?? []), ...recallTools],
+			tools: [
+				createReadTool(resolvedCwd),
+				createEditTool(resolvedCwd),
+				createWriteTool(resolvedCwd),
+			],
+			// Custom tools (e.g., Telegram sticker tool) + native recall tools + managed bash
+			customTools: [
+				managedBashTool as unknown as ToolDefinition,
+				...(this.config.customTools ?? []),
+				...recallTools,
+			],
 		});
 
 		this.agentSession = result.session;

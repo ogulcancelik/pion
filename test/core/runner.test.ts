@@ -10,10 +10,12 @@ import {
 	resolveFetchedImageMimeType,
 } from "../../src/core/inbound.js";
 import {
+	DEFAULT_BASH_TIMEOUT_SEC,
 	Runner,
 	UserFacingError,
 	buildRuntimeErrorSystemPrompt,
 	classifyRuntimeError,
+	createManagedBashToolDefinition,
 	findRetryBranchParentId,
 	parseModelString,
 } from "../../src/core/runner.js";
@@ -21,6 +23,36 @@ import {
 describe("Runner", () => {
 	const testDir = join(import.meta.dir, ".test-runner");
 	let runner: Runner;
+
+	describe("createManagedBashToolDefinition", () => {
+		test("applies the default timeout when omitted and keeps explicit timeout overrides", async () => {
+			const calls: Array<{ command: string; timeout?: number }> = [];
+			const tool = createManagedBashToolDefinition("/tmp", 300, {
+				operations: {
+					exec: async (command, _cwd, options) => {
+						calls.push({ command, timeout: options.timeout });
+						options.onData(Buffer.from("partial output"));
+						return { exitCode: 0 };
+					},
+				},
+			});
+
+			await tool.execute("tool-1", { command: "echo hi" }, undefined, undefined, {} as never);
+			await tool.execute(
+				"tool-2",
+				{ command: "echo hi", timeout: 15 },
+				undefined,
+				undefined,
+				{} as never,
+			);
+
+			expect(calls).toEqual([
+				{ command: "echo hi", timeout: 300 },
+				{ command: "echo hi", timeout: 15 },
+			]);
+			expect(tool.description).toContain("defaults to 300 seconds in Pion");
+		});
+	});
 
 	beforeEach(() => {
 		mkdirSync(testDir, { recursive: true });
