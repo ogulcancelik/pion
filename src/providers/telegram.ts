@@ -267,6 +267,7 @@ export class TelegramProvider implements Provider {
 			{ command: "new", description: "clear the session and start fresh" },
 			{ command: "compact", description: "summarize and continue in a fresh session" },
 			{ command: "settings", description: "show runner controls and context info" },
+			{ command: "restart", description: "restart the daemon and reload config" },
 		]);
 		await this.bot.api.setChatMenuButton({
 			menu_button: { type: "commands" },

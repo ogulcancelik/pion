@@ -453,6 +453,57 @@ export class Runner {
 		this.runtimeEventBus.syncSessionFile(sessionFile);
 	}
 
+	appendAssistantMessage(contextKey: string, text: string, cwd?: string): void {
+		const sessionFile = this.getSessionFile(contextKey);
+		const timestamp = new Date().toISOString();
+		const id = Math.random().toString(36).slice(2, 10);
+
+		if (!existsSync(sessionFile)) {
+			const sessionEntry = {
+				type: "session",
+				version: 3,
+				id: `synthetic-${id}`,
+				timestamp,
+				cwd: cwd ? expandTilde(cwd) : process.cwd(),
+			};
+			writeFileSync(sessionFile, `${JSON.stringify(sessionEntry)}\n`, "utf-8");
+		}
+
+		const content = readFileSync(sessionFile, "utf-8");
+		const lastMessageId = content
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				try {
+					return JSON.parse(line) as { type?: string; id?: string };
+				} catch {
+					return null;
+				}
+			})
+			.filter((entry): entry is { type?: string; id?: string } => entry !== null)
+			.filter((entry) => entry.type === "message" && typeof entry.id === "string")
+			.at(-1)?.id;
+
+		const messageEntry = {
+			type: "message",
+			id: `scheduled-${id}`,
+			parentId: lastMessageId ?? null,
+			timestamp,
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text }],
+				timestamp: Date.now(),
+			},
+		};
+
+		writeFileSync(sessionFile, `${JSON.stringify(messageEntry)}\n`, {
+			encoding: "utf-8",
+			flag: "a",
+		});
+		this.runtimeEventBus.syncSessionFile(sessionFile);
+	}
+
 	/**
 	 * Get all active session keys.
 	 */

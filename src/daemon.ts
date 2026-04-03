@@ -19,6 +19,9 @@ import { loadConfig } from "./config/loader.js";
 import type { Config } from "./config/schema.js";
 import { Commands } from "./core/commands.js";
 import { Compactor } from "./core/compactor.js";
+import { CronJobStore } from "./core/cron-jobs.js";
+import { CronScheduler } from "./core/cron-scheduler.js";
+import { buildCronPromptBlock, createCronTools } from "./core/cron-tools.js";
 import { MessageDebouncer, mergeMessages } from "./core/debouncer.js";
 import { expandTilde, homeDir } from "./core/paths.js";
 import {
@@ -34,6 +37,7 @@ import {
 	createMessageReceivedRuntimeEvent,
 } from "./core/runtime-events.js";
 import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-state.js";
+import { loadSkills } from "./core/skills.js";
 import { ensureWorkspace } from "./core/workspace.js";
 import { TelegramStatusSink } from "./providers/telegram-status.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
@@ -52,6 +56,8 @@ class Daemon {
 	private debounceMs: number;
 	private runtimeState: DaemonRuntimeState;
 	private runtimeEvents: RuntimeEventBus;
+	private cronJobStore: CronJobStore;
+	private cronScheduler: CronScheduler;
 	private recoveryInfo: StartupRecoveryInfo | null = null;
 	private providers: Provider[] = [];
 	private telegramProvider: TelegramProvider | null = null;
@@ -82,6 +88,7 @@ class Daemon {
 		this.router = new Router(config);
 		const dataDir = config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
 		this.runtimeEvents = new RuntimeEventBus(dataDir);
+		this.cronJobStore = new CronJobStore({ dataDir });
 		this.runner = new Runner({
 			dataDir: config.dataDir,
 			skillsDir: config.skillsDir,
@@ -96,6 +103,12 @@ class Daemon {
 			onFlush: (contextKey, messages) => this.processMessages(contextKey, messages),
 		});
 		this.runtimeState = new DaemonRuntimeState(dataDir);
+		this.cronScheduler = new CronScheduler({
+			store: this.cronJobStore,
+			runner: this.runner,
+			cronAgent: this.config.cron?.agent,
+			providers: {},
+		});
 	}
 
 	/** Increment and return the new generation for a context. */
@@ -130,6 +143,10 @@ class Daemon {
 				console.log(`✓ Workspace ready: ${name}`);
 			}
 		}
+		if (this.config.cron?.agent?.workspace) {
+			ensureWorkspace(this.config.cron.agent.workspace);
+			console.log("✓ Workspace ready: cron.agent");
+		}
 
 		// Start Telegram if configured
 		if (this.config.telegram?.botToken) {
@@ -141,6 +158,12 @@ class Daemon {
 			await telegram.start();
 			this.providers.push(telegram);
 			this.telegramProvider = telegram;
+			this.cronScheduler = new CronScheduler({
+				store: this.cronJobStore,
+				runner: this.runner,
+				cronAgent: this.config.cron?.agent,
+				providers: { telegram },
+			});
 			this.detachTelegramStatusSink = new TelegramStatusSink(telegram, {
 				clearOnComplete: this.config.telegram.status?.clearOnComplete,
 			}).attach(this.runtimeEvents);
@@ -161,6 +184,9 @@ class Daemon {
 				console.log("✓ Startup notification sent");
 			}
 		}
+
+		this.cronScheduler.start();
+		console.log("✓ Cron scheduler started");
 
 		if (this.recoveryInfo?.recovered) {
 			await this.notifyRecoveryTargets();
@@ -385,11 +411,24 @@ class Daemon {
 			// Create provider-specific tools
 			const customTools =
 				message.provider === "telegram" && this.telegramProvider
-					? createTelegramTools(
-							this.telegramProvider,
-							message.chatId,
-							agent.workspace ? expandTilde(agent.workspace) : "",
-						)
+					? [
+							...createTelegramTools(
+								this.telegramProvider,
+								message.chatId,
+								agent.workspace ? expandTilde(agent.workspace) : "",
+							),
+							...createCronTools({
+								store: this.cronJobStore,
+								cronAgentConfigured: !!this.config.cron?.agent,
+								availableSkills: this.getAvailableSkillNames(),
+								chatId: message.chatId,
+								contextKey,
+								provider: "telegram",
+								onRunNow: async (jobId) => {
+									await this.cronScheduler.runNow(jobId);
+								},
+							}),
+						]
 					: [];
 
 			// Check again: were we superseded during tool setup?
@@ -416,7 +455,7 @@ class Daemon {
 			const result = await this.runner.process(
 				message,
 				{
-					agentConfig: agent,
+					agentConfig: this.buildForegroundAgentConfig(agent),
 					contextKey,
 					customTools,
 				},
@@ -577,7 +616,7 @@ class Daemon {
 	 */
 	private async supersedeActiveWork(
 		contextKey: string,
-		reason: "stop" | "new" | "compact",
+		reason: "stop" | "new" | "compact" | "restart",
 	): Promise<boolean> {
 		const wasBusy = this.runner.isStreaming(contextKey) || this.processingContexts.has(contextKey);
 		if (wasBusy) {
@@ -664,6 +703,19 @@ class Daemon {
 					break;
 				}
 
+				case "restart": {
+					await provider.send({
+						chatId,
+						text: "↻ Restarting daemon...",
+					});
+					console.log("   ↻ Restart requested");
+					await this.supersedeActiveWork(contextKey, "restart");
+					setTimeout(() => {
+						void this.stop().finally(() => process.exit(1));
+					}, 0);
+					break;
+				}
+
 				case "settings": {
 					const sessionFile = this.runner.getSessionFile(contextKey);
 					const hasSession = existsSync(sessionFile);
@@ -687,12 +739,15 @@ class Daemon {
 						await this.telegramProvider.sendControlMenu({
 							chatId,
 							text: settingsText,
-							buttons: [["🆕 new session", "🧠 compact"], ["⏹ stop"]],
+							buttons: [
+								["🆕 new session", "🧠 compact"],
+								["⏹ stop", "↻ restart"],
+							],
 						});
 					} else {
 						await provider.send({
 							chatId,
-							text: `${settingsText}\n\nAvailable controls: /new, /compact, /stop`,
+							text: `${settingsText}\n\nAvailable controls: /new, /compact, /stop, /restart`,
 						});
 					}
 					console.log("   ✓ Settings shown");
@@ -709,6 +764,23 @@ class Daemon {
 				text: `Failed to execute command: ${error instanceof Error ? error.message : "Unknown error"}`,
 			});
 		}
+	}
+
+	private buildForegroundAgentConfig(agent: Config["agents"][string]): Config["agents"][string] {
+		const cronPrompt = buildCronPromptBlock(!!this.config.cron?.agent);
+		return {
+			...agent,
+			systemPrompt: agent.systemPrompt
+				? `${agent.systemPrompt}\n\n---\n\n${cronPrompt}`
+				: cronPrompt,
+		};
+	}
+
+	private getAvailableSkillNames(): string[] {
+		const skillsDir = this.config.skillsDir
+			? expandTilde(this.config.skillsDir)
+			: join(homeDir(), ".pion/skills");
+		return loadSkills(skillsDir).skills.map((skill) => skill.name);
 	}
 
 	private async notifyRecoveryTargets(): Promise<void> {
@@ -760,6 +832,8 @@ class Daemon {
 
 		this.detachTelegramStatusSink?.();
 		this.detachTelegramStatusSink = undefined;
+
+		this.cronScheduler.stop();
 
 		// Stop all providers
 		for (const provider of this.providers) {

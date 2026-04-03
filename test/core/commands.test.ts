@@ -42,16 +42,23 @@ describe("Commands", () => {
 			expect(result).toEqual({ command: "settings", args: "" });
 		});
 
+		test("parses /restart command", () => {
+			const result = commands.parse("/restart");
+			expect(result).toEqual({ command: "restart", args: "" });
+		});
+
 		test("is case insensitive", () => {
 			expect(commands.parse("/NEW")).toEqual({ command: "new", args: "" });
 			expect(commands.parse("/Compact")).toEqual({ command: "compact", args: "" });
 			expect(commands.parse("/Settings")).toEqual({ command: "settings", args: "" });
+			expect(commands.parse("/Restart")).toEqual({ command: "restart", args: "" });
 		});
 
 		test("recognizes native settings keyboard labels", () => {
 			expect(commands.parse("🆕 new session")).toEqual({ command: "new", args: "" });
 			expect(commands.parse("🧠 compact")).toEqual({ command: "compact", args: "" });
 			expect(commands.parse("⏹ stop")).toEqual({ command: "stop", args: "" });
+			expect(commands.parse("↻ restart")).toEqual({ command: "restart", args: "" });
 		});
 
 		test("ignores unknown commands", () => {
@@ -85,6 +92,13 @@ describe("Commands", () => {
 		test("maps compact action to compact command", () => {
 			expect(commands.fromAction(makeAction("compact"))).toEqual({
 				command: "compact",
+				args: "",
+			});
+		});
+
+		test("maps restart action to restart command", () => {
+			expect(commands.fromAction(makeAction("restart"))).toEqual({
+				command: "restart",
 				args: "",
 			});
 		});

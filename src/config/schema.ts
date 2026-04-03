@@ -16,8 +16,14 @@ export interface Config {
 	 *  Set to 0 to disable debouncing. */
 	debounceMs?: number;
 	telegram?: TelegramConfig;
+	cron?: CronConfig;
 	agents: Record<string, AgentConfig>;
 	routes: Route[];
+}
+
+export interface CronConfig {
+	/** Default execution profile for scheduled agent jobs. */
+	agent?: AgentConfig;
 }
 
 export interface TelegramConfig {
@@ -106,6 +112,30 @@ export function validateConfig(config: unknown): string[] {
 					const status = telegram.status as Record<string, unknown>;
 					if (status.clearOnComplete !== undefined && typeof status.clearOnComplete !== "boolean") {
 						errors.push("telegram.status.clearOnComplete must be a boolean");
+					}
+				}
+			}
+		}
+	}
+
+	if (cfg.cron !== undefined) {
+		if (typeof cfg.cron !== "object" || cfg.cron === null) {
+			errors.push("cron must be an object");
+		} else {
+			const cron = cfg.cron as Record<string, unknown>;
+			if (cron.agent !== undefined) {
+				if (typeof cron.agent !== "object" || cron.agent === null) {
+					errors.push("cron.agent must be an object");
+				} else {
+					const agent = cron.agent as Record<string, unknown>;
+					if (typeof agent.model !== "string") {
+						errors.push("cron.agent.model must be a string");
+					}
+					if (typeof agent.workspace !== "string") {
+						errors.push("cron.agent.workspace must be a string");
+					}
+					if (agent.cwd !== undefined && typeof agent.cwd !== "string") {
+						errors.push("cron.agent.cwd must be a string");
 					}
 				}
 			}

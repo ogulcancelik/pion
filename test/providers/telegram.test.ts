@@ -391,6 +391,7 @@ describe("TelegramProvider", () => {
 					{ command: "new", description: "clear the session and start fresh" },
 					{ command: "compact", description: "summarize and continue in a fresh session" },
 					{ command: "settings", description: "show runner controls and context info" },
+					{ command: "restart", description: "restart the daemon and reload config" },
 				],
 			],
 		]);

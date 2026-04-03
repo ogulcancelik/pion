@@ -1,0 +1,146 @@
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { AgentConfig } from "../../src/config/schema.js";
+import { CronJobStore } from "../../src/core/cron-jobs.js";
+import { CronScheduler } from "../../src/core/cron-scheduler.js";
+import type { Runner } from "../../src/core/runner.js";
+import type { Provider } from "../../src/providers/types.js";
+
+let dataDir: string;
+let store: CronJobStore;
+let provider: Provider;
+let sent: Array<{ chatId: string; text: string }>;
+let runnerCalls: Array<{ contextKey: string; text: string; agentConfig: AgentConfig }>;
+let appendedMessages: Array<{ contextKey: string; text: string; cwd?: string }>;
+let runner: Pick<Runner, "process" | "appendAssistantMessage">;
+let cronAgent: AgentConfig;
+
+beforeEach(() => {
+	dataDir = mkdtempSync(join(tmpdir(), "pion-cron-scheduler-"));
+	store = new CronJobStore({ dataDir });
+	sent = [];
+	runnerCalls = [];
+	appendedMessages = [];
+	provider = {
+		type: "telegram",
+		start: mock(async () => {}),
+		stop: mock(async () => {}),
+		send: mock(async ({ chatId, text }) => {
+			sent.push({ chatId, text });
+			return { chatId, messageId: String(sent.length) };
+		}),
+		onMessage: mock(() => {}),
+		isConnected: mock(() => true),
+	};
+	const workspace = join(dataDir, "agents", "cron");
+	mkdirSync(workspace, { recursive: true });
+	writeFileSync(join(workspace, "SOUL.md"), "scheduled agent soul\n");
+	cronAgent = {
+		model: "anthropic/test-model",
+		workspace,
+		skills: ["supervise"],
+	};
+	runner = {
+		appendAssistantMessage: mock((contextKey, text, cwd) => {
+			appendedMessages.push({ contextKey, text, cwd });
+		}),
+		process: mock(async (message, context, options) => {
+			runnerCalls.push({
+				contextKey: context.contextKey,
+				text: message.text,
+				agentConfig: context.agentConfig,
+			});
+			options?.onTextBlock?.("first block");
+			options?.onTextBlock?.("second block");
+			return { response: "first block\n\nsecond block", warnings: [] };
+		}),
+	};
+});
+
+afterEach(() => {
+	rmSync(dataDir, { recursive: true, force: true });
+});
+
+describe("CronScheduler", () => {
+	test("executes reminder jobs and writes output logs", async () => {
+		store.createJob(
+			{
+				kind: "reminder",
+				name: "invoice reminder",
+				schedule: "0 18 * * 5",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				message: "Send the invoice.",
+			},
+			new Date("2026-04-03T10:00:00Z"),
+		);
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			providers: { telegram: provider },
+		});
+
+		await scheduler.tick(new Date("2026-04-03T18:00:00Z"));
+
+		expect(sent).toEqual([{ chatId: "chat-1", text: "Send the invoice." }]);
+		expect(appendedMessages).toEqual([
+			{
+				contextKey: "telegram:contact:chat-1",
+				text: "[Scheduled job result delivered]\n\nSend the invoice.",
+				cwd: undefined,
+			},
+		]);
+		const job = store.listJobs()[0];
+		expect(job?.lastStatus).toBe("sent reminder");
+		expect(job?.lastOutputPath).toBeString();
+		expect(readFileSync(job?.lastOutputPath || "", "utf-8")).toContain("Send the invoice.");
+	});
+
+	test("executes agent jobs using cron.agent defaults and sends each text block", async () => {
+		const created = store.createJob(
+			{
+				kind: "agent",
+				name: "weekly research",
+				schedule: "0 9 * * 1",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				skills: ["web-browse"],
+				prompt: "Search for new energy-sector news and give a short opinionated summary.",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			providers: { telegram: provider },
+		});
+
+		await scheduler.runNow(created.id, new Date("2026-04-03T08:05:00Z"));
+
+		expect(runnerCalls).toHaveLength(1);
+		expect(runnerCalls[0]?.contextKey).toContain(`cron:${created.id}:2026-04-03T08-05-00-000Z`);
+		expect(runnerCalls[0]?.text).toContain("Search for new energy-sector news");
+		expect(runnerCalls[0]?.agentConfig.model).toBe("anthropic/test-model");
+		expect(runnerCalls[0]?.agentConfig.skills).toEqual(["web-browse"]);
+		expect(runnerCalls[0]?.agentConfig.systemPrompt).toContain(
+			"You are running as a scheduled background job.",
+		);
+		expect(sent).toEqual([
+			{ chatId: "chat-1", text: "first block" },
+			{ chatId: "chat-1", text: "second block" },
+		]);
+		expect(appendedMessages).toEqual([
+			{
+				contextKey: "telegram:contact:chat-1",
+				text: "[Scheduled job result delivered]\n\nfirst block\n\nsecond block",
+				cwd: cronAgent.workspace,
+			},
+		]);
+
+		const job = store.getJob(created.id);
+		expect(job?.lastStatus).toBe("sent agent response");
+		expect(readFileSync(job?.lastOutputPath || "", "utf-8")).toContain("first block");
+	});
+});

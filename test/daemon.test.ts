@@ -50,6 +50,14 @@ describe("Daemon components", () => {
 			expect(config.telegram?.botToken).toBeString();
 		});
 
+		test("example config has cron agent defaults", () => {
+			const config = loadConfig("pion.example.yaml");
+			expect(config.cron?.agent).toBeDefined();
+			const cronAgent = config.cron?.agent;
+			expect(cronAgent?.model).toBeString();
+			expect(cronAgent?.workspace).toBeString();
+		});
+
 		test("throws on missing config file", () => {
 			expect(() => loadConfig("nonexistent.yaml")).toThrow();
 		});
@@ -95,10 +103,16 @@ describe("Daemon components", () => {
 			expect(result).toEqual({ command: "settings", args: "" });
 		});
 
+		test("/restart command is parsed correctly", () => {
+			const result = commands.parse("/restart");
+			expect(result).toEqual({ command: "restart", args: "" });
+		});
+
 		test("native settings keyboard labels are parsed correctly", () => {
 			expect(commands.parse("🆕 new session")).toEqual({ command: "new", args: "" });
 			expect(commands.parse("🧠 compact")).toEqual({ command: "compact", args: "" });
 			expect(commands.parse("⏹ stop")).toEqual({ command: "stop", args: "" });
+			expect(commands.parse("↻ restart")).toEqual({ command: "restart", args: "" });
 		});
 
 		test("regular messages are not commands", () => {
@@ -109,7 +123,6 @@ describe("Daemon components", () => {
 
 		test("unknown commands return null", () => {
 			expect(commands.parse("/help")).toBeNull();
-			expect(commands.parse("/restart")).toBeNull();
 			expect(commands.parse("/reload")).toBeNull();
 		});
 	});

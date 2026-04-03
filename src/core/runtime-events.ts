@@ -70,7 +70,7 @@ export type PionRuntimeEvent =
 			source: "pion";
 			contextKey: string;
 			type: "runtime_superseded";
-			reason: "new_message" | "stop" | "new" | "compact";
+			reason: "new_message" | "stop" | "new" | "compact" | "restart";
 	  }
 	| {
 			id: string;

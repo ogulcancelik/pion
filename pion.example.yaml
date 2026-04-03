@@ -29,6 +29,17 @@ telegram:
   # status:
   #   clearOnComplete: true
 
+cron:
+  # Default execution profile for scheduled agent jobs.
+  # This is separate from chat-routing agents.
+  agent:
+    model: anthropic/claude-haiku-4-5
+    workspace: "~/.pion/agents/main"
+    # Optional execution cwd. Defaults to workspace when omitted.
+    # cwd: "~/Projects/some-repo"
+    skills:
+      - web-browse
+
 agents:
   main:
     model: anthropic/claude-sonnet-4-20250514

@@ -115,7 +115,9 @@ function summarizeToolCall(toolName: string, args: unknown): string {
 	return toolLabel(toolName);
 }
 
-function finalStatusLine(event: Extract<RuntimeEvent, { source: "pion"; type: "runtime_processing_complete" }>): string {
+function finalStatusLine(
+	event: Extract<RuntimeEvent, { source: "pion"; type: "runtime_processing_complete" }>,
+): string {
 	if (event.outcome === "failed") {
 		return `⚠️ failed${event.errorMessage ? ` — ${event.errorMessage}` : ""}`;
 	}

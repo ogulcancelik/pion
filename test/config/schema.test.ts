@@ -164,4 +164,44 @@ describe("validateConfig", () => {
 		});
 		expect(errors).toContain("telegram.status.clearOnComplete must be a boolean");
 	});
+
+	test("accepts cron agent defaults", () => {
+		const errors = validateConfig({
+			cron: {
+				agent: {
+					model: "anthropic/claude-haiku-4-5",
+					workspace: "/tmp/pion/agents/cron",
+					skills: ["web-browse"],
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test("rejects non-object cron agent defaults", () => {
+		const errors = validateConfig({
+			cron: {
+				agent: "haiku",
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("cron.agent must be an object");
+	});
+
+	test("rejects non-string cron agent model", () => {
+		const errors = validateConfig({
+			cron: {
+				agent: {
+					model: 123,
+					workspace: "/tmp/pion/agents/cron",
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("cron.agent.model must be a string");
+	});
 });
