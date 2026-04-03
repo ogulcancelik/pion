@@ -1,31 +1,40 @@
-# Pion Configuration Example
-# Copy to pion.yaml and customize
+# Pion configuration example
+# Copy to ~/.pion/config.yaml and customize.
 
-# Provider credentials
-telegram:
-  botToken: "your-bot-token-here"
-  # Optional live-status behavior
-  # status:
-  #   clearOnComplete: true
+# Optional base runtime directory (default: ~/.pion)
+# dataDir: "~/.pion"
 
-# Optional: override auth storage path.
+# Optional skills directory (default: ~/.pion/skills)
+# skillsDir: "~/.pion/skills"
+
+# Optional auth storage path.
 # Default is ~/.pion/auth.json.
 # File format is compatible with pi auth.json.
 # authPath: "~/.pion/auth.json"
 
 # Message debounce window in milliseconds (default: 5000).
-# Batches rapid-fire messages into a single prompt.
+# Batches rapid-fire message fragments into one prompt.
 # Set to 0 to disable debouncing.
 # debounceMs: 5000
 
-# Optional global model override for session recall queries.
-# By default, session_query uses the current session model.
+# Optional global model override for session_query lookups.
+# If unset, Pion uses the active session model.
 # recallQueryModel: "anthropic/claude-haiku-4-5"
 
-# Agent definitions
+telegram:
+  botToken: "your-bot-token-here"
+  # Optional: notify this chat when the daemon starts
+  # startupNotify: "123456"
+  # Optional live-status behavior
+  # status:
+  #   clearOnComplete: true
+
 agents:
   main:
     model: anthropic/claude-sonnet-4-20250514
+    workspace: "~/.pion/agents/main"
+    # Optional execution cwd. Defaults to workspace when omitted.
+    # cwd: "~/Projects/some-repo"
     systemPrompt: |
       You are a helpful assistant with full access to tools and capabilities.
       Be concise but thorough.
@@ -35,20 +44,21 @@ agents:
 
   casual:
     model: anthropic/claude-sonnet-4-20250514
+    workspace: "~/.pion/agents/casual"
     systemPrompt: |
       You're chatting in a friend group. Be casual, witty, and fun.
-      Don't be overly helpful - be entertaining.
       Keep responses short unless asked for detail.
     skills: []
 
   family:
     model: anthropic/claude-sonnet-4-20250514
+    workspace: "~/.pion/agents/family"
     systemPrompt: |
       You help with everyday questions. Be patient and clear.
       Explain things simply. Use the user's language.
     skills: []
 
-# Routing rules (first match wins)
+# Routing rules: first match wins.
 routes:
   # VIP contact gets main agent
   - match:
@@ -62,19 +72,19 @@ routes:
     agent: casual
     isolation: per-chat
 
-  # Family members
+  # Family member gets family agent
   - match:
       contact: "+0987654321"
     agent: family
     isolation: per-contact
 
-  # All other DMs get main agent
+  # All other DMs go to main
   - match:
       type: dm
     agent: main
     isolation: per-contact
 
-  # Ignore all other groups
+  # Ignore unmatched groups
   - match:
       type: group
     agent: null

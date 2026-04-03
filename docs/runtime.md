@@ -2,85 +2,169 @@
 
 ## Overview
 
-Pion runs as two independent processes:
+Pion currently runs as two independent processes:
 
-1. **Daemon** (`src/daemon.ts`) — single long-running Bun process that handles all messaging
-2. **Monitor** (`src/tui/monitor.ts`) — optional read-only TUI that watches session files
+1. **Daemon** (`src/daemon.ts`) — the long-running Telegram + agent runtime
+2. **Monitor** (`src/tui/monitor.ts`) — a read-only TUI that watches one session file
 
-There is no IPC between them. The monitor reads JSONL session files directly via `fs.watch`.
+There is no IPC layer between them. The daemon writes JSONL/session artifacts; the monitor reads session files directly.
 
 ## Daemon
 
-The daemon is a single Bun process that starts providers, routes messages, and runs pi-agent sessions.
+The daemon owns:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                       DAEMON (bun run daemon)                       │
-│                                                                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────────────┐│
-│  │  Telegram   │  │  WhatsApp   │  │         Core                 ││
-│  │  Provider   │  │  Provider   │  │  ┌────────┐  ┌────────────┐  ││
-│  │             │  │             │  │  │ Router │  │  Runner     │  ││
-│  │  grammy     │  │  baileys    │  │  └────────┘  │  (sessions) │  ││
-│  │  polling    │  │  websocket  │  │  ┌────────┐  └────────────┘  ││
-│  └──────┬──────┘  └──────┬──────┘  │  │Commands│                  ││
-│         │                │         │  └────────┘                  ││
-│         └────────────────┴─────────┴──────────────────────────────┘│
-│                                                                     │
-│  Sessions written to: ~/.pion/sessions/*.jsonl                      │
-└─────────────────────────────────────────────────────────────────────┘
+- Telegram ingress/egress
+- routing and isolation
+- command handling
+- message debouncing
+- pi agent session lifecycle
+- runtime event logging
+- SQLite sidecar indexing
+- Telegram live status updates
+- crash/restart recovery bookkeeping
+
+```text
+┌────────────────────────────────────────────────────────────────────┐
+│                         PION DAEMON                               │
+│                                                                    │
+│  Telegram Provider ─▶ Router ─▶ Debouncer / Commands ─▶ Runner     │
+│         │                                            │             │
+│         │                                            ├─▶ sessions  │
+│         │                                            ├─▶ events    │
+│         └──────────────▶ Telegram status sink ◀──────└─▶ sqlite    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Startup
 
-1. Load config from `~/.pion/config.yaml` (or `./pion.yaml` for dev)
-2. Ensure agent workspaces exist (creates default SOUL.md if missing)
-3. Start Telegram provider (if configured)
-4. Send startup notification (if `telegram.startupNotify` is set)
-5. Start WhatsApp provider (if configured and paired)
-6. Begin accepting messages
+On boot, the daemon:
+
+1. loads config
+2. opens runtime state / recovery markers
+3. ensures configured workspaces exist
+4. constructs the runtime event bus and SQLite sidecar
+5. starts Telegram (if configured)
+6. attaches the Telegram status sink
+7. sends startup / recovery notifications if configured
+8. begins accepting updates
 
 ### Message Flow
 
-1. Provider receives message → calls `handleMessage()`
-2. Router matches message to agent via config routes
-3. If message is a command (`/new`, `/compact`, `/stop`) → handle directly
-4. If session is already streaming → steer (inject message mid-response)
-5. Otherwise → create/resume pi-agent session, process message
-6. Send response chunks back via provider
-7. Check context usage, send warnings if needed
+Normal message path:
+
+1. Telegram provider normalizes an inbound update into a Pion `Message`
+2. Router selects the matching agent and context key
+3. Commands (`/new`, `/compact`, `/stop`) are intercepted immediately
+4. Non-command messages are buffered by the debouncer unless `debounceMs: 0`
+5. Buffered messages for the same context are merged when the quiet window expires
+6. If a run is already active, newer work supersedes the old generation
+7. Attachments are materialized to temp files under `/tmp/pion-media/<context>/`
+8. Runner resumes or creates the pi agent session
+9. Session output streams back to Telegram
+10. Runtime events are recorded and the SQLite sidecar is synced
+
+### Commands
+
+| Command | Behavior |
+|--------|----------|
+| `/new` | archive the current session and start fresh |
+| `/compact [focus]` | summarize current conversation and prime a fresh session |
+| `/stop` | supersede the active run |
+
+Commands bypass the debounce buffer and cancel any buffered messages for that context.
+
+### Native Tools at Runtime
+
+Each run can include:
+
+- Telegram tools: `send_sticker`, `send_file`
+- Native recall tools: `session_search`, `session_query`
+
+Recall uses the SQLite sidecar for lookup and JSONL sessions for final answers.
+
+### Live Status on Telegram
+
+While a run is active, Pion maintains an editable Telegram status message showing:
+
+- `⚙️ working`
+- the latest tool calls (for example `read`, `bash`, `session_search`, `session_query`)
+- failure state if a run ends in error
+
+By default the status message is cleared when the run completes. That behavior is controlled by:
+
+```yaml
+telegram:
+  status:
+    clearOnComplete: true
+```
+
+### Recovery Model
+
+Pion keeps a lightweight runtime-state file so it can detect an interrupted previous run on startup and notify affected chats.
+
+This is deliberately simple: recovery is about visibility, not replaying partial agent execution.
 
 ### Signal Handling
 
 | Signal | Behavior |
 |--------|----------|
-| `SIGINT` | Graceful shutdown |
-| `SIGTERM` | Graceful shutdown |
-| `SIGHUP` | Logged but not yet implemented (config reload) |
+| `SIGINT` | graceful shutdown |
+| `SIGTERM` | graceful shutdown |
+| `SIGHUP` | logged only; config reload is not implemented |
 
-Graceful shutdown stops all providers and exits cleanly.
+## Session + Event Artifacts
 
-### Running
+At runtime, Pion writes:
 
-```bash
-# Direct
-bun run daemon
-
-# Or
-bun run src/daemon.ts
+```text
+~/.pion/
+├── sessions/
+│   ├── <context>.jsonl
+│   └── archive/
+├── runtime-events/
+│   └── <context>.jsonl
+└── index.sqlite
 ```
 
-## Systemd Service
+The split is intentional:
+
+- **session JSONL** = conversation history and tool results
+- **runtime-events JSONL** = operational telemetry
+- **index.sqlite** = derived search/inspection index
+
+## Monitor TUI
+
+The monitor is still a **session viewer**, not a full runtime inspector.
+
+```bash
+bun run monitor
+bun run monitor telegram-contact-123
+```
+
+It:
+
+1. opens the target session JSONL file
+2. renders user/assistant/tool output with pi TUI components
+3. watches the file for append-only changes
+4. recomputes footer stats from session usage metadata
+
+### Keybindings
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+T` | toggle thinking visibility |
+| `Ctrl+O` | toggle tool expansion |
+| `q` / `Ctrl+C` | quit |
+
+## Systemd Example
 
 ```ini
-# ~/.config/systemd/user/pion.service
 [Unit]
-Description=Pion Messaging Bridge
+Description=Pion agent daemon
 After=network.target
 
 [Service]
 Type=simple
-# Update these paths to match your setup
 ExecStart=%h/.bun/bin/bun run %h/Projects/pion/src/daemon.ts
 Restart=on-failure
 RestartSec=5
@@ -89,87 +173,29 @@ RestartSec=5
 WantedBy=default.target
 ```
 
+Useful commands:
+
 ```bash
-# Enable and start
 systemctl --user enable pion
 systemctl --user start pion
-
-# Check status
 systemctl --user status pion
-
-# View logs
 journalctl --user -u pion -f
 ```
 
-## Monitor TUI
+## Operational Trade-offs
 
-A separate read-only process that displays a session's messages in real-time using pi-tui components.
+### What stays simple
 
-```bash
-# Watch most recently modified session
-bun run monitor
+- one daemon process
+- no separate queue/worker system
+- JSONL sessions remain easy to inspect and back up
+- no IPC layer between runtime and monitor
+- recall/search is fast without changing the source-of-truth format
 
-# Watch a specific session
-bun run monitor telegram-contact-123
-```
+### What is intentionally limited
 
-### How it works
-
-1. Finds session JSONL file (most recent, or by name)
-2. Parses all entries and renders using pi's `UserMessageComponent`, `AssistantMessageComponent`, `ToolExecutionComponent`
-3. Watches the file with `fs.watch()` for live updates
-4. No connection to the daemon — just reads files
-
-### Keybindings
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+T` | Toggle thinking block visibility |
-| `Ctrl+O` | Toggle tool output expansion |
-| `q` / `Ctrl+C` | Exit |
-
-## File Layout at Runtime
-
-```
-~/.pion/
-├── config.yaml           # Main config
-├── auth.json             # Anthropic OAuth credentials
-├── sessions/             # Active sessions (JSONL)
-│   ├── telegram-contact-123.jsonl
-│   ├── whatsapp-chat-friends.jsonl
-│   └── archive/          # Old sessions from /new and /compact
-├── skills/               # Skill directories
-├── whatsapp-auth/        # WhatsApp credentials
-│   └── creds.json
-└── agents/
-    └── main/
-        ├── SOUL.md
-        └── ...
-```
-
-## Comparison with Clawdbot
-
-| Aspect | Clawdbot | Pion |
-|--------|----------|------|
-| Architecture | Separate gateway + workers | Single daemon process |
-| IPC | WebSocket + HTTP | None (file-based) |
-| Web UI | Yes | No (TUI monitor only) |
-| Config | JSON | YAML |
-| Session format | Custom | pi-agent JSONL |
-| Complexity | High (~170k LOC) | Low (<5k LOC) |
-| Agent | Custom | pi-agent (shared with pi CLI) |
-
-## Trade-offs
-
-**Pros:**
-- Simple single-process daemon — easy to debug and operate
-- Systemd handles process management, restarts, logging
-- No inter-process coordination
-- Sessions persist to disk — daemon can restart cleanly
-- Monitor is independent — connect/disconnect anytime
-
-**Cons:**
-- Can't scale across machines (fine for personal use)
-- Provider crash takes down everything (restart is fast)
-- No hot code reload (need restart for code changes)
-- No config reload without restart (SIGHUP not yet implemented)
+- Telegram is the only implemented provider
+- a provider/runtime crash still restarts the whole daemon
+- no hot config reload
+- monitor only sees session files, not the full runtime-event stream
+- no distributed/runtime-cluster story

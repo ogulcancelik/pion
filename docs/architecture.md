@@ -2,112 +2,154 @@
 
 ## Overview
 
-```
-┌─────────────┐     ┌──────────┐     ┌─────────────┐
-│  Providers  │────▶│  Router  │────▶│   Runner    │
-│  (TG / WA)  │     │          │     │  (pi-agent) │
-└─────────────┘     └──────────┘     └─────────────┘
-       │                 │                  │
-       ▼                 ▼                  ▼
-┌─────────────┐    ┌──────────┐     ┌─────────────┐
-│  Commands   │    │  Config  │     │  Workspace  │
-│  (/new etc) │    │  (yaml)  │     │  + Skills   │
-└─────────────┘    └──────────┘     └─────────────┘
+Pion is a small chat-native agent runtime built on pi's agent/session stack.
+
+Current shape:
+
+```text
+Telegram ─▶ Router ─▶ Debounce / Commands ─▶ Runner (pi agent session)
+                           │                      │
+                           │                      ├─▶ session JSONL (source of truth)
+                           │                      ├─▶ runtime event logs
+                           │                      └─▶ SQLite sidecar index
+                           └─▶ Telegram live status sink
 ```
 
-- **Providers** receive messages from Telegram/WhatsApp and send responses back
-- **Router** matches messages to agents using config rules
-- **Runner** manages pi-agent sessions per conversation context
-- **Commands** handle `/new`, `/compact`, `/stop` before they reach the agent
-- **Workspace** loads SOUL.md, IDENTITY.md, etc. for the system prompt
-- **Skills** are loaded from `~/.pion/skills/` and appended to the system prompt
+Main responsibilities:
 
-## Directory Structure
+- **Telegram provider** normalizes inbound Telegram updates into Pion messages
+- **Router** maps each message to an agent and context key
+- **Daemon control flow** handles commands, debouncing, steering, superseding, and recovery
+- **Runner** owns the pi agent session for each context, loads prompt resources, and injects native tools
+- **Runtime event bus** records both daemon-level and pi SDK events
+- **SQLite sidecar** indexes sessions, tool calls, attachments, and runtime events for recall/inspection
 
-```
+Pion is currently **Telegram-only**. The provider interface is richer than the current surface, but only Telegram is implemented today.
+
+## Runtime Data Layout
+
+```text
 ~/.pion/
-├── config.yaml              # Main config
-├── auth.json                # Anthropic OAuth (shared with pi)
-├── sessions/                # Conversation history (JSONL)
-│   ├── telegram-contact-123.jsonl
-│   ├── whatsapp-chat-group-xyz.jsonl
-│   └── archive/             # Archived sessions (from /new, /compact)
-├── skills/                  # Skill directories (SKILL.md each)
-│   ├── web-browse/
-│   └── supervise/
-├── whatsapp-auth/           # WhatsApp session credentials
-│   └── creds.json
-└── agents/                  # Agent workspaces
-    └── main/
-        ├── SOUL.md          # Core personality (cached)
-        ├── IDENTITY.md      # Agent identity (cached)
-        ├── AGENTS.md        # Workspace rules (cached)
-        ├── USER.md          # User profile (cached)
-        ├── MEMORY.md        # Persistent notes (agent-writable)
-        ├── memory/          # Additional memory files (*.md, sorted by name)
-        └── stickers.yaml    # Telegram sticker mappings (name → file_id)
+├── config.yaml
+├── auth.json
+├── index.sqlite
+├── runtime-events/
+│   └── <context>.jsonl
+├── sessions/
+│   ├── <context>.jsonl
+│   └── archive/
+├── skills/
+│   └── <skill>/SKILL.md
+└── agents/
+    └── <agent>/
+        ├── SOUL.md
+        ├── IDENTITY.md
+        ├── AGENTS.md
+        ├── USER.md
+        ├── MEMORY.md
+        ├── memory/*.md
+        └── stickers.yaml
 ```
 
-## Session Files
+Two important boundaries:
 
-Each context key maps to a JSONL file:
+- **Session JSONL files are authoritative conversation history**
+- **`index.sqlite` is derived state for fast lookup, search, and monitoring**
+
+## Prompt Resources
+
+Pion builds the base system prompt from the agent workspace in a stable order:
+
+1. `SOUL.md`
+2. `IDENTITY.md`
+3. `AGENTS.md`
+4. `USER.md`
+5. `MEMORY.md`
+6. `memory/*.md` (sorted by filename)
+7. inline `systemPrompt` from config
+
+Selected skills are loaded separately through pi's resource loader.
+
+That gives Pion a simple split:
+- **workspace files** = long-lived prompt context
+- **skills** = reusable procedures loaded by name
+- **session history** = conversation state in JSONL
+
+## Workspace vs Execution CWD
+
+Each agent can set both:
+
+- `workspace` — where prompt resources live (`SOUL.md`, `AGENTS.md`, `MEMORY.md`, stickers)
+- `cwd` — where tools and commands execute
+
+If `cwd` is unset, Pion falls back to `workspace`, then `process.cwd()`.
+
+This keeps prompt authoring separate from the actual filesystem/project the agent works in.
+
+## Session Storage
+
+Each routed context gets its own pi-compatible session file:
 
 - `telegram:contact:123` → `sessions/telegram-contact-123.jsonl`
-- `whatsapp:chat:Friends` → `sessions/whatsapp-chat-Friends.jsonl`
+- `telegram:chat:-1001234567890` → `sessions/telegram-chat--1001234567890.jsonl`
 
-The JSONL format follows pi-agent's session format:
+The file format matches pi's session JSONL format, so the monitor can read it directly and session replay stays simple.
 
-```jsonl
-{"type":"session","version":3,"id":"compacted-abc123","timestamp":"2026-03-14T10:00:00.000Z","cwd":"/home/user"}
-{"type":"message","id":"msg-1","parentId":null,"timestamp":"2026-03-14T10:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"Hello!"}],"timestamp":1710410401000}}
-{"type":"message","id":"msg-2","parentId":"msg-1","timestamp":"2026-03-14T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-20250514","usage":{"input":500,"output":20,"cacheRead":450,"cacheWrite":0,"cost":{"total":0.001}},"stopReason":"stop","timestamp":1710410402000}}
-```
+Archived sessions from `/new` and `/compact` move into `sessions/archive/`.
 
-Key points:
-- Each line is a JSON object with a `type` field (`session`, `message`, `thinking_level_change`, etc.)
-- Messages have `message.role` (`user`, `assistant`, `toolResult`) and `message.content` (array of parts)
-- Content parts can be `text`, `thinking`, `toolCall`, `image`, etc.
-- Assistant messages include `usage` with token counts and cost
-- This format is identical to pi's session format — the monitor TUI reads it directly
+## Runtime Event Bus
 
-## Prompt Caching Strategy
+Pion records two event families:
 
-Anthropic charges less for cached prompt tokens. The system prompt is built in a stable order to maximize cache hits:
+- **Pion runtime events** — message received, buffered, merged, processing start/complete, superseded, warning emitted, output sent
+- **Pi session events** — tool execution start/end, message updates, and other SDK-level activity emitted by the underlying agent session
 
-1. **SOUL.md** — most stable, core personality
-2. **IDENTITY.md** — agent persona, rarely changes
-3. **AGENTS.md** — workspace rules
-4. **USER.md** — user context
-5. **MEMORY.md** — persistent notes
-6. **memory/*.md** — memory directory files (sorted by name)
-7. **Skills** — loaded from skills directory, appended by `formatSkillsForPrompt()`
-8. **Inline systemPrompt** — from config (if set)
+Every context also gets a runtime-event log under `runtime-events/<context>.jsonl`.
 
-```
-┌─────────────────────────────────────────────────────────┐
-│ System Prompt (stable — cached)                         │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │ SOUL.md + IDENTITY.md + AGENTS.md + USER.md         │ │ ← Cached
-│ └─────────────────────────────────────────────────────┘ │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │ MEMORY.md + memory/*.md + Skills + systemPrompt     │ │ ← May vary
-│ └─────────────────────────────────────────────────────┘ │
-├─────────────────────────────────────────────────────────┤
-│ Conversation History                                    │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │ Previous messages...                                │ │ ← Cached
-│ └─────────────────────────────────────────────────────┘ │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │ [timestamp | Context: N%] + user message            │ │ ← New
-│ └─────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
-```
+That log is separate from session history on purpose:
+- session JSONL is the user/assistant/tool conversation record
+- runtime events are operational telemetry
 
-Dynamic context (timestamp, context usage %) is prepended to each user message — not the system prompt — so the system prompt stays cache-friendly.
+## SQLite Sidecar Index
 
-## Skills System
+`src/core/sqlite-index.ts` maintains a derived SQLite database with:
 
-Skills are loaded from `~/.pion/skills/` using pi's `loadSkillsFromDir()`. Each skill is a directory with a `SKILL.md` file. The agent config specifies which skills to include:
+- indexed session messages
+- indexed tool calls
+- indexed attachment references
+- indexed runtime events
+- per-session metadata
+
+Pion re-syncs session files into the SQLite index after runs complete and records runtime events as they happen.
+
+This makes recall and inspection cheap without replacing JSONL as source of truth.
+
+## Native Recall Tools
+
+Pion injects two native agent-facing recall tools:
+
+### `session_search(query)`
+
+- searches indexed past sessions via SQLite FTS-style lookup
+- returns matching session files with snippets and hit counts
+- meant for candidate discovery
+
+### `session_query(sessionPath, question)`
+
+- opens one specific JSONL session file
+- serializes the relevant conversation
+- asks a model a direct question about that session
+- answers from JSONL, not from SQLite rows alone
+
+So the architecture is:
+- **SQLite** for fast candidate search
+- **JSONL session** for authoritative recall answers
+
+## Skills
+
+Pion uses pi's skill loader, but keeps selection simple and explicit.
+
+Per agent, config lists skill names:
 
 ```yaml
 agents:
@@ -117,111 +159,65 @@ agents:
       - supervise
 ```
 
-Skills are appended to the system prompt after workspace files.
+Those skills are loaded from `skillsDir` (default `~/.pion/skills`) and exposed through the agent session's resource loader.
 
-## Custom Tools
+Pion does **not** currently load arbitrary pi extensions. The resource loader intentionally provides:
+- workspace system prompt
+- selected skills
+- no custom extension package/runtime discovery
 
-Providers can register custom tools that the agent can invoke:
+## Provider Tools
 
-- **Telegram**: `send_sticker` (sends a named sticker from `stickers.yaml`) and `send_file` (sends a file from the filesystem)
-- Tools are created per-message with the provider and chat ID bound in
+Telegram-specific tools are injected per run:
 
-## Commands
+- `send_sticker` — send a named sticker from `stickers.yaml`
+- `send_file` — send a file from the local filesystem
 
-Messages starting with `/` are intercepted before reaching the agent:
+Native recall tools are injected alongside them:
+- `session_search`
+- `session_query`
 
-| Command | Description |
-|---------|-------------|
-| `/new` | Clear session history, start fresh (archives old session) |
-| `/compact [focus]` | Summarize history with Haiku, start new session with summary |
-| `/stop` | Abort current agent processing |
+## Message Lifecycle
 
-## Compaction
+1. Telegram update becomes a normalized Pion message
+2. Router picks the agent + context key
+3. Commands (`/new`, `/compact`, `/stop`) bypass normal prompting
+4. Non-command messages enter the debounce buffer (unless `debounceMs: 0`)
+5. When flushed, messages may be merged into a single prompt
+6. Attachments are materialized to temp files and referenced in prompt text
+7. Runner resumes or creates the pi agent session
+8. Output streams back to Telegram while runtime events are recorded
+9. Session JSONL and SQLite index are synced
 
-`/compact` uses Claude Haiku to summarize the conversation, then starts a fresh session primed with the summary. The original session is archived to `sessions/archive/`.
+## Run Control Semantics
 
-## Context Warnings
+Pion is built for chat behavior rather than one-shot CLI turns:
 
-The runner tracks context window usage and sends warnings:
-- **85%** — first warning with `/new` and `/compact` hints
-- **95%** — urgent warning
+- **debounce** batches rapid-fire fragments into one user turn
+- **steering** injects new user text into an active run when the underlying pi session is streaming
+- **superseding** cancels/suppresses older runs when new messages arrive or `/stop` is issued
+- **compaction** summarizes the conversation and primes a fresh session
 
-## Message Debouncing
+## Attachment Pipeline
 
-Chat users naturally send rapid-fire messages (fragments of a single thought). Instead of processing each separately, pion debounces them:
+Inbound Telegram media is normalized, then materialized to temp files under `/tmp/pion-media/<context>/`.
 
-1. Message arrives → buffered, 5-second timer starts
-2. Another message within 5s → buffer it, reset timer
-3. Timer expires (5s of silence) → merge all buffered messages into one prompt
+Prompt text gets explicit attachment markers like:
 
-This means the agent always sees the user's complete thought, not fragments.
-
-**Merging:** Texts are joined with `\n`. Media from all messages is collected. First message's identity (id, chatId, sender) is used; last message's timestamp.
-
-**Commands bypass debounce:** `/stop`, `/new`, `/compact` execute immediately. They also cancel any pending buffered messages.
-
-**Superseding:** If the agent is already processing when a new message arrives, the old run is superseded — a generation counter ensures the old run bails at its next async checkpoint and suppresses output. The new message enters the debounce buffer normally.
-
-**Configuration:** `debounceMs` in config (default: 5000). Set to `0` to disable debouncing entirely.
-
-**Note:** In group chats with `per-chat` isolation, messages from different senders within the debounce window will be merged into one prompt. This is an acceptable tradeoff for the current use case.
-
-## Config Schema
-
-```yaml
-# ~/.pion/config.yaml
-
-dataDir: ~/.pion             # Where sessions and agents live (default)
-skillsDir: ~/.pion/skills    # Where skills are loaded from (default)
-recallQueryModel: anthropic/claude-haiku-4-5  # Optional global recall/query model override
-debounceMs: 5000             # Message debounce window (default: 5000, 0 to disable)
-
-telegram:
-  botToken: "..."
-  startupNotify: "123456"   # Chat ID to notify on startup (optional)
-
-whatsapp:
-  sessionDir: ~/.pion/whatsapp-auth
-  allowDMs:                  # Phone numbers allowed to DM
-    - "+1234567890"
-  allowGroups:               # Group JIDs allowed
-    - "120363403098358590@g.us"
-
-agents:
-  main:
-    model: anthropic/claude-sonnet-4-20250514
-    workspace: ~/.pion/agents/main  # Contains SOUL.md, etc.
-    skills:
-      - web-browse
-      - supervise
-
-  casual:
-    model: anthropic/claude-sonnet-4-20250514
-    systemPrompt: |
-      You're chatting in a friend group. Be casual and fun.
-    skills: []
-
-routes:
-  - match: { type: dm }
-    agent: main
-    isolation: per-contact
-
-  - match: { group: "Friends" }
-    agent: casual
-    isolation: per-chat
-
-  - match: { type: group }
-    agent: null              # Ignore unmatched groups
-    isolation: per-chat
+```text
+[User attached image: /tmp/pion-media/.../photo.jpg]
 ```
 
-Routes are evaluated top-to-bottom (first match wins). Setting `agent: null` ignores the message.
+That keeps the runtime simple:
+- the agent can inspect actual files if needed
+- attachment references are also discoverable in the SQLite index
 
-### Isolation modes
+## Current Non-Goals
 
-- **per-contact** — each sender gets their own session (DMs)
-- **per-chat** — all participants share one session (groups)
+These are intentionally not part of Pion right now:
 
-## Image Support
-
-Providers can attach images to messages. The runner fetches images (from URL or buffer), converts to base64, and passes them to pi-agent as image content parts.
+- general extension loading
+- alternate provider backends beyond Telegram
+- a separate web UI/control plane
+- replacing JSONL sessions with a database-native conversation store
+- a large autonomous memory platform beyond workspace files + session recall + skills

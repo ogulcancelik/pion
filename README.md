@@ -1,131 +1,148 @@
 # Pion
 
-A messaging bridge connecting Telegram to [pi-agent](https://github.com/badlogic/pi-mono).
+A simple chat-native agent runtime built on the [pi SDK](https://github.com/badlogic/pi-mono).
 
-> **pion** /ˈpaɪɒn/ — a subatomic particle that mediates forces between others. Like this project mediates messages.
+Pion stays opinionated and small: one daemon, one current provider surface (Telegram), pi-compatible session files, workspace-driven prompting, selected skills, native recall tools, and a read-only monitor.
+
+> **pion** /ˈpaɪɒn/ — a subatomic particle that mediates forces between others.
 
 ## Features
 
-- **Telegram** — text, photos, stickers, files, long messages sent as `.md` documents
-- **Routing** — per-chat or per-contact isolation, match by type/contact/group
-- **Sessions** — JSONL persistence, archiving, context usage warnings (85%/95%)
-- **Workspace** — SOUL.md, IDENTITY.md, USER.md, MEMORY.md, memory/ directory
-- **Skills** — loaded from `~/.pion/skills/`
-- **Commands** — `/new` (fresh session), `/compact` (summarize & continue), `/stop` (abort)
-- **Steering** — send messages while the agent is still processing
-- **Custom tools** — `send_sticker` (from stickers.yaml), `send_file`
-- **Monitor TUI** — live session viewer, same look as pi CLI
-- **Daemon** — systemd support, watch mode for development
+- **Telegram-first runtime** — text, photos, stickers, voice notes, documents, long responses as Telegram documents when needed
+- **Routing + isolation** — match by DM/group/contact/chat ID with `per-contact` or `per-chat` session isolation
+- **pi-native sessions** — JSONL session files remain the source of truth
+- **Runtime observability** — per-context runtime event logs plus a SQLite sidecar index for search and inspection
+- **Native recall tools** — `session_search` for candidate lookup, `session_query` for Q&A against a past session
+- **Workspace prompting** — `SOUL.md`, `IDENTITY.md`, `AGENTS.md`, `USER.md`, `MEMORY.md`, and `memory/*.md`
+- **Separate prompt/work execution roots** — `workspace` can differ from execution `cwd`
+- **Skills** — selected from `~/.pion/skills/` and loaded through pi's skill system
+- **Chat-native control flow** — debounce rapid-fire messages, steer active runs, `/new`, `/compact`, `/stop`
+- **Telegram live status** — editable "working/tool activity" status message while the agent runs
+- **Provider tools** — `send_sticker` and `send_file`
+- **Monitor TUI** — read-only session viewer built with pi-tui components
 
 ## Quick Start
 
-Prerequisites: [Bun](https://bun.sh), plus OAuth auth for pion.
-
-Pion keeps its own auth file at `~/.pion/auth.json` by default, but uses the same
-`auth.json` schema as pi for compatibility.
-
-```bash
-bun run login        # anthropic oauth -> ~/.pion/auth.json
-```
+Prerequisites:
+- [Bun](https://bun.sh)
+- pi-compatible auth (Pion stores its own auth by default at `~/.pion/auth.json`)
 
 ```bash
 bun install
+bun run login
 
-# Copy example config and edit
 cp pion.example.yaml ~/.pion/config.yaml
 $EDITOR ~/.pion/config.yaml
 
-# Start the daemon
 bun run start
 ```
 
+`bun run login` stores auth in `~/.pion/auth.json` by default. The file format matches pi's `auth.json`, but the path is separate unless you override `authPath`.
+
 ## Configuration
 
-Config is loaded from `~/.pion/config.yaml` (or `./pion.yaml` for development).
+Config is loaded from:
 
-See [`pion.example.yaml`](pion.example.yaml) for a full example covering agents, routing rules, and provider setup.
+1. `~/.pion/config.yaml` / `~/.pion/config.yml`
+2. `./pion.yaml` / `./pion.yml`
+3. `./config.yaml` / `./config.yml`
+
+See [`pion.example.yaml`](pion.example.yaml) for a working example.
 
 Key concepts:
-- **Agents** — define model, system prompt, and skills per personality
-- **Routes** — first matching rule wins; match by contact, group, or chat type
-- **Isolation** — `per-chat` (each chat has its own context) or `per-contact` (same person shares context across chats)
+- **agents** — choose a model, prompt workspace, optional execution `cwd`, inline prompt text, and enabled skills
+- **routes** — first match wins; send a chat to an agent or ignore it with `agent: null`
+- **workspace vs cwd** — `workspace` provides prompt files; `cwd` is where tools/commands execute
+- **recallQueryModel** — optional cheaper/faster model for `session_query`
+- **debounceMs** — batch rapid message fragments before a run starts
 
 ## Commands
 
-Messaging commands:
-
 | Command | Description |
 |---------|-------------|
-| `/new` | Archive current session and start fresh |
-| `/compact` | Summarize conversation and continue with reduced context |
-| `/stop` | Abort the current agent response |
+| `/new` | Archive the current session and start fresh |
+| `/compact [focus]` | Summarize the current conversation and continue in a fresh session |
+| `/stop` | Supersede the active run |
 
 CLI auth commands:
 
 ```bash
-bun run login              # login to anthropic and save ~/.pion/auth.json
-bun run login anthropic    # same, explicit
-bun run login list         # show supported login providers
+bun run login
+bun run login anthropic
+bun run login list
 ```
 
-`bun run login` also tries to open the OAuth URL in your desktop browser automatically.
+## Native Recall Tools
 
-## Monitor TUI
+Pion injects two native recall tools into agent sessions:
 
-Live session viewer built with pi-tui components.
+- `session_search(query)` — search indexed past sessions and return matching session files with snippets
+- `session_query(sessionPath, question)` — load one past JSONL session and answer a direct question about it
 
-```bash
-bun run monitor
-```
-
-Keybindings: `Ctrl+T` toggle thinking blocks, `Ctrl+O` toggle tool expansion.
+Search runs against the SQLite sidecar index. Final answers come from the original JSONL session file.
 
 ## Runtime Directory
 
 ```text
 ~/.pion/
 ├── config.yaml
-├── auth.json                (pion auth; schema-compatible with pi auth.json)
-├── sessions/                (JSONL conversation history)
-│   └── archive/             (archived sessions from /new)
-├── skills/                  (skill definitions)
+├── auth.json                 # Pion auth (schema-compatible with pi auth.json)
+├── index.sqlite              # Derived sidecar index for search/inspection
+├── runtime-events/           # Per-context runtime event logs (JSONL)
+├── sessions/                 # pi-compatible session JSONL files
+│   └── archive/              # Archived sessions from /new and /compact
+├── skills/                   # Skill directories (SKILL.md)
 └── agents/
     └── main/
         ├── SOUL.md
         ├── IDENTITY.md
+        ├── AGENTS.md
         ├── USER.md
         ├── MEMORY.md
-        ├── memory/          (additional .md files)
-        └── stickers.yaml    (telegram sticker mappings)
+        ├── memory/           # Additional prompt fragments (*.md, sorted)
+        └── stickers.yaml     # Telegram sticker name -> file_id mappings
 ```
 
-You can override the auth location with `authPath` in `~/.pion/config.yaml`.
+Incoming media is materialized into temporary files under `/tmp/pion-media/<context>/` before being referenced in the agent prompt.
+
+## Monitor TUI
+
+```bash
+bun run monitor
+bun run monitor telegram-contact-123
+```
+
+Keybindings:
+- `Ctrl+T` toggle thinking blocks
+- `Ctrl+O` toggle tool expansion
+- `q` / `Ctrl+C` quit
 
 ## Development
 
 ```bash
-bun run dev              # watch mode
-bun run start            # run daemon
-bun run monitor          # session monitor TUI
-bun test                 # run tests
-bun run lint             # biome check
-bun run typecheck        # tsc --noEmit
+bun run dev
+bun run start
+bun run monitor
+bun test
+bun run lint
+bun run typecheck
 ```
 
 ## Architecture
 
+```text
+Telegram ─▶ Router ─▶ Debounce / Commands ─▶ Runner (pi agent session)
+                           │                      │
+                           │                      ├─▶ session JSONL
+                           │                      ├─▶ runtime events JSONL
+                           │                      └─▶ SQLite sidecar index
+                           └─▶ Telegram live status
 ```
-┌─────────────┐     ┌──────────┐     ┌─────────────┐
-│  Providers  │────▶│  Router  │────▶│   Runner    │
-│  (Telegram) │     │          │     │  (pi-agent) │
-└─────────────┘     └──────────┘     └─────────────┘
-       │                 │                  │
-       ▼                 ▼                  ▼
-┌─────────────┐    ┌──────────┐     ┌─────────────┐
-│  Commands   │    │  Config  │     │  Workspace  │
-│  (/new etc) │    │  (yaml)  │     │  + Skills   │
-└─────────────┘    └──────────┘     └─────────────┘
-```
+
+For more detail:
+- [`docs/architecture.md`](docs/architecture.md)
+- [`docs/runtime.md`](docs/runtime.md)
+- [`docs/recall-tool-design.md`](docs/recall-tool-design.md)
 
 ## License
 
