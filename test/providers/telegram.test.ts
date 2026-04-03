@@ -163,6 +163,90 @@ describe("TelegramProvider", () => {
 		});
 	});
 
+	test("normalizes photos without captions to empty text plus image media", async () => {
+		const provider = new TelegramProvider({ botToken: "test-token" });
+		const messages: any[] = [];
+		provider.onMessage((message) => {
+			messages.push(message);
+		});
+		(provider as any).dispatchMessage({
+			id: "photo-1",
+			chatId: "123",
+			senderId: "7",
+			senderName: "Can",
+			text: "",
+			media: [{ type: "image", url: "https://example.com/photo.jpg", mimeType: "image/jpeg" }],
+			isGroup: false,
+			provider: "telegram",
+			timestamp: new Date(1712091600 * 1000),
+			raw: {},
+		});
+
+		expect(messages).toEqual([
+			{
+				id: "photo-1",
+				chatId: "123",
+				senderId: "7",
+				senderName: "Can",
+				text: "",
+				media: [{ type: "image", url: "https://example.com/photo.jpg", mimeType: "image/jpeg" }],
+				isGroup: false,
+				provider: "telegram",
+				timestamp: new Date(1712091600 * 1000),
+				raw: {},
+			},
+		]);
+	});
+
+	test("normalizes voice messages to raw audio media instead of provider-side transcription", async () => {
+		const provider = new TelegramProvider({ botToken: "test-token" });
+		const messages: any[] = [];
+		provider.onMessage((message) => {
+			messages.push(message);
+		});
+		(provider as any).dispatchMessage({
+			id: "voice-1",
+			chatId: "123",
+			senderId: "7",
+			senderName: "Can",
+			text: "",
+			media: [
+				{
+					type: "audio",
+					url: "https://example.com/voice.ogg",
+					mimeType: "audio/ogg",
+					fileName: "voice.ogg",
+				},
+			],
+			isGroup: false,
+			provider: "telegram",
+			timestamp: new Date(1712091600 * 1000),
+			raw: {},
+		});
+
+		expect(messages).toEqual([
+			{
+				id: "voice-1",
+				chatId: "123",
+				senderId: "7",
+				senderName: "Can",
+				text: "",
+				media: [
+					{
+						type: "audio",
+						url: "https://example.com/voice.ogg",
+						mimeType: "audio/ogg",
+						fileName: "voice.ogg",
+					},
+				],
+				isGroup: false,
+				provider: "telegram",
+				timestamp: new Date(1712091600 * 1000),
+				raw: {},
+			},
+		]);
+	});
+
 	test("normalizes callback queries into action events", async () => {
 		const provider = new TelegramProvider({ botToken: "test-token" });
 		const actions: any[] = [];

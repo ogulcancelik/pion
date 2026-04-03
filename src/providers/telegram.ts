@@ -137,7 +137,7 @@ export class TelegramProvider implements Provider {
 				chatId: String(chat.id),
 				senderId: String(msg.from?.id ?? "unknown"),
 				senderName: msg.from?.first_name ?? msg.from?.username,
-				text: msg.caption || "[image]",
+				text: msg.caption ?? "",
 				media: [media],
 				isGroup: chat.type === "group" || chat.type === "supergroup",
 				provider: "telegram",
@@ -226,82 +226,30 @@ export class TelegramProvider implements Provider {
 				mime_type: voice.mime_type,
 			});
 
-			try {
-				// Download the voice file
-				const file = await ctx.api.getFile(voice.file_id);
-				const fileUrl = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
+			const file = await ctx.api.getFile(voice.file_id);
+			const fileUrl = `https://api.telegram.org/file/bot${this.config.botToken}/${file.file_path}`;
 
-				const response = await fetch(fileUrl);
-				if (!response.ok) {
-					console.error("[telegram] Failed to download voice file");
-					return;
-				}
-				const buffer = Buffer.from(await response.arrayBuffer());
+			const media: MediaAttachment = {
+				type: "audio",
+				url: fileUrl,
+				mimeType: voice.mime_type,
+				fileName: file.file_path?.split("/").pop() || `voice-${msg.message_id}.ogg`,
+			};
 
-				// Save to tmp as ogg
-				const tmpDir = join(tmpdir(), "pion-voice");
-				mkdirSync(tmpDir, { recursive: true });
-				const oggPath = join(tmpDir, `voice-${Date.now()}.ogg`);
-				const wavPath = oggPath.replace(".ogg", ".wav");
-				writeFileSync(oggPath, buffer);
+			const message: Message = {
+				id: String(msg.message_id),
+				chatId: String(chat.id),
+				senderId: String(msg.from?.id ?? "unknown"),
+				senderName: msg.from?.first_name ?? msg.from?.username,
+				text: "",
+				media: [media],
+				isGroup: chat.type === "group" || chat.type === "supergroup",
+				provider: "telegram",
+				timestamp: new Date(msg.date * 1000),
+				raw: msg,
+			};
 
-				// Convert ogg to wav (16kHz mono) using ffmpeg
-				const { execSync } = await import("node:child_process");
-				execSync(`ffmpeg -y -i "${oggPath}" -ar 16000 -ac 1 "${wavPath}" 2>/dev/null`);
-
-				// Transcribe using voxtype (with pion config for auto language detection)
-				const home = process.env.HOME || "~";
-				const voxConfig = `${home}/.pion/voxtype/config.toml`;
-				const configFlag = existsSync(voxConfig) ? `-c "${voxConfig}"` : "";
-				const transcription = execSync(
-					`${home}/.local/bin/voxtype ${configFlag} transcribe "${wavPath}"`,
-					{ encoding: "utf-8", timeout: 30000 },
-				).trim();
-
-				// Cleanup temp files
-				try {
-					unlinkSync(oggPath);
-				} catch {}
-				try {
-					unlinkSync(wavPath);
-				} catch {}
-
-				console.log(`[telegram] Transcribed voice: "${transcription.slice(0, 50)}..."`);
-
-				const message: Message = {
-					id: String(msg.message_id),
-					chatId: String(chat.id),
-					senderId: String(msg.from?.id ?? "unknown"),
-					senderName: msg.from?.first_name ?? msg.from?.username,
-					text: transcription || "[empty voice message]",
-					isGroup: chat.type === "group" || chat.type === "supergroup",
-					provider: "telegram",
-					timestamp: new Date(msg.date * 1000),
-					raw: msg,
-				};
-
-				this.dispatchMessage(message);
-			} catch (err) {
-				console.error(
-					"[telegram] Voice transcription failed:",
-					err instanceof Error ? err.message : err,
-				);
-
-				// Still send message so user knows it was received
-				const message: Message = {
-					id: String(msg.message_id),
-					chatId: String(chat.id),
-					senderId: String(msg.from?.id ?? "unknown"),
-					senderName: msg.from?.first_name ?? msg.from?.username,
-					text: "[voice message - transcription failed]",
-					isGroup: chat.type === "group" || chat.type === "supergroup",
-					provider: "telegram",
-					timestamp: new Date(msg.date * 1000),
-					raw: msg,
-				};
-
-				this.dispatchMessage(message);
-			}
+			this.dispatchMessage(message);
 		});
 
 		// Error handling

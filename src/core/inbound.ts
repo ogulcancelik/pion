@@ -125,10 +125,8 @@ export function buildPromptTextWithMediaPaths(
 	}
 
 	const trimmedText = messageText.trim();
-	const shouldOmitPlaceholder =
-		trimmedText === "[image]" && attachments.every((attachment) => attachment.kind === "image");
 	const parts: string[] = [];
-	if (trimmedText && !shouldOmitPlaceholder) {
+	if (trimmedText) {
 		parts.push(messageText);
 	}
 	parts.push(

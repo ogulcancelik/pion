@@ -387,7 +387,7 @@ describe("Runner", () => {
 			expect(attachments[0]?.path.endsWith(".png")).toBe(true);
 			expect(attachments[0]?.byteSize).toBe(Buffer.from("fake image bytes").length);
 			expect(existsSync(attachments[0]?.path || "")).toBe(true);
-			expect(buildPromptTextWithMediaPaths("[image]", attachments)).toBe(
+			expect(buildPromptTextWithMediaPaths("", attachments)).toBe(
 				`[User attached image: ${attachments[0]?.path}]`,
 			);
 		});
@@ -401,6 +401,22 @@ describe("Runner", () => {
 			expect(prompt).toBe(
 				"look at these\n\n[User attached image: /tmp/one.jpg]\n[User attached image: /tmp/two.png]",
 			);
+		});
+
+		test("renders attachment-only document messages as path lines without provider placeholders", () => {
+			const prompt = buildPromptTextWithMediaPaths("", [
+				{ kind: "document", path: "/tmp/report.pdf", source: { provider: "telegram" } },
+			]);
+
+			expect(prompt).toBe("[User attached document: /tmp/report.pdf]");
+		});
+
+		test("renders attachment-only audio messages as path lines without provider-side transcription", () => {
+			const prompt = buildPromptTextWithMediaPaths("", [
+				{ kind: "audio", path: "/tmp/voice.ogg", source: { provider: "telegram" } },
+			]);
+
+			expect(prompt).toBe("[User attached audio: /tmp/voice.ogg]");
 		});
 
 		test("materializeInboundMessage keeps the original message fields and adds typed artifacts", async () => {
