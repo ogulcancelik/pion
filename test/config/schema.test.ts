@@ -178,6 +178,22 @@ describe("validateConfig", () => {
 		expect(errors).toHaveLength(0);
 	});
 
+	test("accepts telegram status mode", () => {
+		for (const mode of ["clear", "keep", "off"]) {
+			const errors = validateConfig({
+				telegram: {
+					botToken: "token",
+					status: {
+						mode,
+					},
+				},
+				agents: { main: { model: "x", systemPrompt: "y" } },
+				routes: [],
+			});
+			expect(errors).toHaveLength(0);
+		}
+	});
+
 	test("accepts updateCheck config", () => {
 		const errors = validateConfig({
 			updateCheck: {
@@ -215,6 +231,20 @@ describe("validateConfig", () => {
 			routes: [],
 		});
 		expect(errors).toContain("telegram.status.clearOnComplete must be a boolean");
+	});
+
+	test("rejects invalid telegram status mode", () => {
+		const errors = validateConfig({
+			telegram: {
+				botToken: "token",
+				status: {
+					mode: "loud",
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("telegram.status.mode must be one of: clear, keep, off");
 	});
 
 	test("accepts cron agent defaults", () => {

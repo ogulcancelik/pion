@@ -37,13 +37,17 @@ export interface CronConfig {
 	agent?: AgentConfig;
 }
 
+export type TelegramStatusMode = "clear" | "keep" | "off";
+
 export interface TelegramConfig {
 	botToken: string;
 	/** Chat ID to notify on startup (optional) */
 	startupNotify?: string;
 	/** Telegram live-status behavior */
 	status?: {
-		/** Clear the live status message when a run completes (default: true) */
+		/** Live-status mode. clear = show while running then remove, keep = leave final bubbles in chat, off = disable status messages. */
+		mode?: TelegramStatusMode;
+		/** Deprecated compatibility flag. true = clear, false = keep. */
 		clearOnComplete?: boolean;
 	};
 }
@@ -143,6 +147,14 @@ export function validateConfig(config: unknown): string[] {
 					errors.push("telegram.status must be an object");
 				} else {
 					const status = telegram.status as Record<string, unknown>;
+					if (
+						status.mode !== undefined &&
+						status.mode !== "clear" &&
+						status.mode !== "keep" &&
+						status.mode !== "off"
+					) {
+						errors.push("telegram.status.mode must be one of: clear, keep, off");
+					}
 					if (status.clearOnComplete !== undefined && typeof status.clearOnComplete !== "boolean") {
 						errors.push("telegram.status.clearOnComplete must be a boolean");
 					}

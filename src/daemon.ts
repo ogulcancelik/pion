@@ -181,6 +181,7 @@ class Daemon {
 				providers: { telegram },
 			});
 			this.detachTelegramStatusSink = new TelegramStatusSink(telegram, {
+				mode: this.config.telegram.status?.mode,
 				clearOnComplete: this.config.telegram.status?.clearOnComplete,
 			}).attach(this.runtimeEvents);
 

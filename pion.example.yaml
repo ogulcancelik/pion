@@ -40,7 +40,12 @@ telegram:
   # startupNotify: "123456"
   # Optional live-status behavior
   # status:
-  #   clearOnComplete: true
+  #   # clear = show while running then remove
+  #   # keep = show while running and leave the final status bubble in chat
+  #   # off = disable Telegram status bubbles entirely
+  #   mode: clear
+  #   # Deprecated compatibility flag. true = clear, false = keep.
+  #   # clearOnComplete: true
 
 cron:
   # Default execution profile for scheduled agent jobs.

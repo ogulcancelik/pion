@@ -1,3 +1,4 @@
+import type { TelegramStatusMode } from "../config/schema.js";
 import type { RuntimeEvent, RuntimeEventBus } from "../core/runtime-events.js";
 import type { StatusHandle, StatusUpdate } from "./types.js";
 
@@ -7,6 +8,7 @@ interface TelegramStatusProvider {
 }
 
 interface TelegramStatusSinkOptions {
+	mode?: TelegramStatusMode;
 	clearOnComplete?: boolean;
 }
 
@@ -127,17 +129,28 @@ function finalStatusLine(
 	return "✅ done";
 }
 
+function resolveTelegramStatusMode(options: TelegramStatusSinkOptions): TelegramStatusMode {
+	if (options.mode) {
+		return options.mode;
+	}
+	if (options.clearOnComplete !== undefined) {
+		return options.clearOnComplete ? "clear" : "keep";
+	}
+	return "clear";
+}
+
 export class TelegramStatusSink {
 	private states = new Map<string, TelegramStatusState>();
 	private eventQueue: Promise<void> = Promise.resolve();
-	private options: Required<TelegramStatusSinkOptions>;
+	private options: { mode: TelegramStatusMode; clearOnComplete?: boolean };
 
 	constructor(
 		private provider: TelegramStatusProvider,
 		options: TelegramStatusSinkOptions = {},
 	) {
 		this.options = {
-			clearOnComplete: options.clearOnComplete ?? true,
+			mode: resolveTelegramStatusMode(options),
+			clearOnComplete: options.clearOnComplete,
 		};
 	}
 
@@ -148,6 +161,9 @@ export class TelegramStatusSink {
 	}
 
 	private async pushStatus(state: TelegramStatusState): Promise<void> {
+		if (this.options.mode === "off") {
+			return;
+		}
 		const text = renderStatusText(state);
 		if (state.lastRenderedText === text && state.handle) {
 			return;
@@ -196,6 +212,10 @@ export class TelegramStatusSink {
 	}
 
 	private async handlePionEvent(event: Extract<RuntimeEvent, { source: "pion" }>): Promise<void> {
+		if (this.options.mode === "off") {
+			return;
+		}
+
 		if (event.type === "runtime_compaction_start") {
 			if (event.provider !== "telegram") return;
 			const state = this.states.get(event.contextKey) ?? {
@@ -245,10 +265,11 @@ export class TelegramStatusSink {
 			const state = this.states.get(event.contextKey);
 			if (!state) return;
 			state.statusLine = finalStatusLine(event);
-			if (!this.options.clearOnComplete || event.outcome === "failed") {
+			const shouldClear = this.options.mode === "clear";
+			if (!shouldClear || event.outcome === "failed") {
 				await this.pushStatus(state);
 			}
-			if (this.options.clearOnComplete) {
+			if (shouldClear) {
 				for (const handle of state.handlesSeen) {
 					await this.provider.clearStatus(handle);
 				}

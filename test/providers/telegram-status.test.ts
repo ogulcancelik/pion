@@ -414,6 +414,80 @@ describe("TelegramStatusSink", () => {
 		expect(clearStatus).toHaveBeenCalledWith(handle);
 	});
 
+	test("supports keep mode and leaves the final status bubble in chat", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus,
+			}),
+			{ mode: "keep" },
+		);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-keep-complete",
+			timestamp: "2026-04-02T21:00:05.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_processing_complete",
+			outcome: "completed",
+			messagesSent: 1,
+			responseLength: 12,
+		});
+
+		expect(clearStatus).not.toHaveBeenCalled();
+		expect(upsertStatus.mock.calls.at(-1)?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: "✅ done",
+			actions: [],
+		});
+	});
+
+	test("supports off mode and never creates status messages", async () => {
+		const upsertStatus = mock(async (_status: StatusUpdate) => makeHandle());
+		const clearStatus = mock(async (_handle: StatusHandle) => {});
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus,
+			}),
+			{ mode: "off" },
+		);
+
+		await sink.handleEvent(makeProcessingStart());
+		await sink.handleEvent({
+			id: "evt-tool-start-off",
+			timestamp: "2026-04-02T21:00:01.000Z",
+			source: "pi",
+			contextKey: "telegram:contact:user-1",
+			sessionFile: "/tmp/session.jsonl",
+			type: "tool_execution_start",
+			event: {
+				type: "tool_execution_start",
+				toolCallId: "tool-off",
+				toolName: "read",
+				args: { path: "src/first.ts" },
+			},
+		});
+		await sink.handleEvent({
+			id: "evt-complete-off",
+			timestamp: "2026-04-02T21:00:05.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_processing_complete",
+			outcome: "completed",
+			messagesSent: 1,
+			responseLength: 12,
+		});
+
+		expect(upsertStatus).not.toHaveBeenCalled();
+		expect(clearStatus).not.toHaveBeenCalled();
+	});
+
 	test("shows a failure state before clearing on failed completion", async () => {
 		const handle = makeHandle();
 		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);

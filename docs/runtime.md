@@ -98,8 +98,16 @@ By default the status message is cleared when the run completes. That behavior i
 ```yaml
 telegram:
   status:
-    clearOnComplete: true
+    mode: clear
 ```
+
+Status modes are:
+
+- `clear` — show live status while the run is active, then remove it
+- `keep` — show live status while the run is active, then leave the final bubble in chat
+- `off` — disable Telegram status bubbles entirely
+
+`clearOnComplete` is still accepted as a compatibility alias. `true` maps to `clear`. `false` maps to `keep`.
 
 ### Recovery Model
 
