@@ -2,11 +2,18 @@ import type { AgentConfig } from "../config/schema.js";
 import { createTelegramTools } from "../providers/telegram-tools.js";
 import type { Provider } from "../providers/types.js";
 import type { CronJob, CronJobStore } from "./cron-jobs.js";
-import type { Runner } from "./runner.js";
+import { type Runner, getUserFacingErrorMessage } from "./runner.js";
 
 const DEFAULT_TICK_MS = 60_000;
 const CRON_AGENT_NOTE =
 	"You are running as a scheduled background job. No user is present. Complete the task fully and write a final response that can be delivered directly to the configured Telegram chat.";
+
+class HandledScheduledJobError extends Error {
+	constructor(public readonly causeError: unknown) {
+		super("Scheduled job failure already handled");
+		this.name = "HandledScheduledJobError";
+	}
+}
 
 export interface CronSchedulerConfig {
 	store: CronJobStore;
@@ -57,8 +64,27 @@ export class CronScheduler {
 			}
 			await this.executeAgentJob(job, now);
 		} catch (error) {
+			if (error instanceof HandledScheduledJobError) {
+				return;
+			}
+			const provider = this.config.providers.telegram;
 			const message = error instanceof Error ? error.message : String(error);
-			this.config.store.recordRunFailure(job.id, message, now);
+			let outputPath: string | undefined;
+			if (job.kind === "agent") {
+				outputPath = this.config.store.writeRunOutput(job.id, now, {
+					kind: job.kind,
+					prompt: job.prompt,
+					error: message,
+					failedAt: now.toISOString(),
+				});
+			}
+			this.config.store.recordRunFailure(job.id, message, now, outputPath);
+			if (provider && job.kind === "agent") {
+				await provider.send({
+					chatId: job.delivery.chatId,
+					text: this.buildScheduledJobFailureText(job, error),
+				});
+			}
 		}
 	}
 
@@ -84,38 +110,57 @@ export class CronScheduler {
 		const sentBlocks: string[] = [];
 		const runStamp = now.toISOString().replace(/[:.]/g, "-");
 		const workspace = agentConfig.workspace;
-		await this.config.runner.process(
-			{
-				id: `cron-${job.id}-${runStamp}`,
-				chatId: job.delivery.chatId,
-				senderId: `cronjob:${job.id}`,
-				senderName: "Pion scheduler",
-				text: job.prompt ?? "",
-				isGroup: false,
-				provider: "telegram",
-				timestamp: now,
-				raw: { cronJobId: job.id },
-			},
-			{
-				agentConfig,
-				contextKey: `cron:${job.id}:${runStamp}`,
-				customTools: createTelegramTools(provider as never, job.delivery.chatId, workspace),
-			},
-			{
-				onTextBlock: (text) => {
-					sentBlocks.push(text);
-					void provider.send({ chatId: job.delivery.chatId, text });
+		let result: Awaited<ReturnType<Runner["process"]>>;
+		try {
+			result = await this.config.runner.process(
+				{
+					id: `cron-${job.id}-${runStamp}`,
+					chatId: job.delivery.chatId,
+					senderId: `cronjob:${job.id}`,
+					senderName: "Pion scheduler",
+					text: job.prompt ?? "",
+					isGroup: false,
+					provider: "telegram",
+					timestamp: now,
+					raw: { cronJobId: job.id },
 				},
-			},
-		);
-		const combinedText = sentBlocks.join("\n\n").trim();
-		if (combinedText) {
-			this.appendDeliveredResult(job, combinedText, agentConfig.cwd ?? agentConfig.workspace);
+				{
+					agentConfig,
+					contextKey: `cron:${job.id}:${runStamp}`,
+					customTools: createTelegramTools(provider as never, job.delivery.chatId, workspace),
+				},
+				{
+					onTextBlock: (text) => {
+						sentBlocks.push(text);
+					},
+				},
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const outputPath = this.config.store.writeRunOutput(job.id, now, {
+				kind: job.kind,
+				prompt: job.prompt,
+				responseBlocks: sentBlocks,
+				error: message,
+				failedAt: now.toISOString(),
+			});
+			this.config.store.recordRunFailure(job.id, message, now, outputPath);
+			await provider.send({
+				chatId: job.delivery.chatId,
+				text: this.buildScheduledJobFailureText(job, error),
+			});
+			throw new HandledScheduledJobError(error);
+		}
+		const deliveredText = (sentBlocks.at(-1) ?? result.response ?? "").trim();
+		if (deliveredText) {
+			await provider.send({ chatId: job.delivery.chatId, text: deliveredText });
+			this.appendDeliveredResult(job, deliveredText, agentConfig.cwd ?? agentConfig.workspace);
 		}
 		const outputPath = this.config.store.writeRunOutput(job.id, now, {
 			kind: job.kind,
 			prompt: job.prompt,
 			responseBlocks: sentBlocks,
+			deliveredText,
 			deliveredAt: now.toISOString(),
 		});
 		this.config.store.recordRunSuccess(
@@ -137,6 +182,10 @@ export class CronScheduler {
 				? `${configured.systemPrompt}\n\n---\n\n${CRON_AGENT_NOTE}`
 				: CRON_AGENT_NOTE,
 		};
+	}
+
+	private buildScheduledJobFailureText(job: CronJob, error: unknown): string {
+		return `Scheduled job "${job.name}" failed: ${getUserFacingErrorMessage(error)}`;
 	}
 
 	private appendDeliveredResult(job: CronJob, text: string, cwd?: string): void {

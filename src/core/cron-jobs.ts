@@ -210,12 +210,18 @@ export class CronJobStore {
 		}));
 	}
 
-	recordRunFailure(id: string, error: string, now = new Date()): CronJob | undefined {
+	recordRunFailure(
+		id: string,
+		error: string,
+		now = new Date(),
+		outputPath?: string,
+	): CronJob | undefined {
 		return this.patchJob(id, (job) => ({
 			...job,
 			state: "failed",
 			lastStatus: "failed",
 			lastError: error,
+			lastOutputPath: outputPath ?? job.lastOutputPath,
 			updatedAt: now.toISOString(),
 		}));
 	}

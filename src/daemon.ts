@@ -30,7 +30,7 @@ import {
 	dedupeRecoveryTargets,
 } from "./core/recovery.js";
 import { Router } from "./core/router.js";
-import { Runner, UserFacingError } from "./core/runner.js";
+import { Runner, getUserFacingErrorMessage } from "./core/runner.js";
 import {
 	type PionRuntimeEventInput,
 	RuntimeEventBus,
@@ -574,10 +574,7 @@ class Daemon {
 			}
 
 			console.error("   ✗ Error:", error instanceof Error ? error.message : error);
-			const errorText =
-				error instanceof UserFacingError
-					? error.userMessage
-					: "Sorry, I encountered an error. Please try again.";
+			const errorText = getUserFacingErrorMessage(error);
 
 			// Send error message back
 			await provider.send({

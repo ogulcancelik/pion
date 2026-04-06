@@ -38,4 +38,6 @@ pion.yaml
 config.yaml
 
 # pi agent sessions/goals
-.pi/
+.pi/*
+!.pi/issues/
+!.pi/issues/**

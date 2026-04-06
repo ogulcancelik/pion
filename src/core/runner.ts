@@ -95,6 +95,13 @@ export class UserFacingError extends Error {
 	}
 }
 
+export function getUserFacingErrorMessage(
+	error: unknown,
+	fallback = "Sorry, I encountered an error. Please try again.",
+): string {
+	return error instanceof UserFacingError ? error.userMessage : fallback;
+}
+
 export type RuntimeErrorDisposition =
 	| {
 			kind: "retry-with-runtime-note";
