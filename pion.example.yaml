@@ -9,7 +9,7 @@
 
 # Optional auth storage path.
 # Default is ~/.pion/auth.json.
-# File format is compatible with pi auth.json.
+# File format is compatible with pi auth.json and can store multiple providers.
 # authPath: "~/.pion/auth.json"
 
 # Message debounce window in milliseconds (default: 5000).

@@ -25,7 +25,7 @@ Pion stays opinionated and small: one daemon, one current provider surface (Tele
 
 Prerequisites:
 - [Bun](https://bun.sh)
-- pi-compatible auth (Pion stores its own auth by default at `~/.pion/auth.json`)
+- pi-compatible auth (Pion stores its own multi-provider auth file by default at `~/.pion/auth.json`)
 
 ```bash
 bun install
@@ -37,7 +37,7 @@ $EDITOR ~/.pion/config.yaml
 bun run start
 ```
 
-`bun run login` stores auth in `~/.pion/auth.json` by default. The file format matches pi's `auth.json`, but the path is separate unless you override `authPath`.
+`bun run login` stores auth in `~/.pion/auth.json` by default. The file format matches pi's `auth.json`, but the path is separate unless you override `authPath`. One auth file can hold multiple providers at once, including OAuth subscriptions and plain API keys.
 
 ## Configuration
 
@@ -69,6 +69,8 @@ CLI auth commands:
 ```bash
 bun run login
 bun run login anthropic
+bun run login openai-codex
+bun run login minimax --api-key "$MINIMAX_API_KEY"
 bun run login list
 ```
 
@@ -86,7 +88,7 @@ Search runs against the SQLite sidecar index. Final answers come from the origin
 ```text
 ~/.pion/
 ├── config.yaml
-├── auth.json                 # Pion auth (schema-compatible with pi auth.json)
+├── auth.json                 # Pion auth for multiple providers (schema-compatible with pi auth.json)
 ├── index.sqlite              # Derived sidecar index for search/inspection
 ├── runtime-events/           # Per-context runtime event logs (JSONL)
 ├── sessions/                 # pi-compatible session JSONL files

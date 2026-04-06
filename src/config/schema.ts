@@ -7,7 +7,7 @@ export interface Config {
 	dataDir?: string;
 	/** Directory containing skills (default: ~/.pion/skills) */
 	skillsDir?: string;
-	/** Auth storage path (default: ~/.pion/auth.json, same schema as pi auth.json) */
+	/** Auth storage path (default: ~/.pion/auth.json, same multi-provider schema as pi auth.json) */
 	authPath?: string;
 	/** Optional global model override for session_query recall lookups. Defaults to the active session model. */
 	recallQueryModel?: string;
