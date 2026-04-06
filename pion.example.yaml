@@ -25,6 +25,15 @@
 # If unset, Pion uses the active session model.
 # recallQueryModel: "anthropic/claude-haiku-4-5"
 
+# Repo update awareness for the running Pion checkout.
+# On the first real user message of a new day, Pion can check whether this
+# checkout is behind its git upstream and inject a hidden [SYSTEM] note.
+# /checkupdate always returns the current status on demand.
+# updateCheck:
+#   enabled: true
+#   # Optional override. Defaults to the Pion repo containing src/daemon.ts.
+#   # repoPath: "~/Projects/pion"
+
 telegram:
   botToken: "your-bot-token-here"
   # Optional: notify this chat when the daemon starts

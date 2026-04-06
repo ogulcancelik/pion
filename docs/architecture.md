@@ -184,10 +184,12 @@ Native recall tools are injected alongside them:
 3. Commands (`/new`, `/compact`, `/stop`) bypass normal prompting
 4. Non-command messages enter the debounce buffer (unless `debounceMs: 0`)
 5. When flushed, messages may be merged into a single prompt
-6. Attachments are materialized to temp files and referenced in prompt text
-7. Runner resumes or creates the pi agent session
-8. Output streams back to Telegram while runtime events are recorded
-9. Session JSONL and SQLite index are synced
+6. On the first real user turn of a new day, Pion may perform a cheap git update check for its own checkout
+7. If that checkout is behind upstream, Pion injects a hidden `[SYSTEM]` note into that user turn instead of sending an operator-facing alert
+8. Attachments are materialized to temp files and referenced in prompt text
+9. Runner resumes or creates the pi agent session
+10. Output streams back to Telegram while runtime events are recorded
+11. Session JSONL and SQLite index are synced
 
 ## Run Control Semantics
 

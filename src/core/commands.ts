@@ -6,11 +6,12 @@ import type { ActionMessage } from "../providers/types.js";
  * Commands:
  *   /new     - Start fresh session (clears history)
  *   /compact - Summarize and start new session with summary
- *   /stop    - Abort current processing immediately
+ *   /stop        - Abort current processing immediately
+ *   /checkupdate - Check whether this Pion checkout is behind upstream
  */
 
 export interface CommandMatch {
-	command: "new" | "compact" | "stop" | "settings" | "restart";
+	command: "new" | "compact" | "stop" | "settings" | "restart" | "checkupdate";
 	args: string;
 }
 
@@ -20,7 +21,7 @@ export interface CommandResult {
 	response?: string;
 }
 
-const KNOWN_COMMANDS = ["new", "compact", "stop", "settings", "restart"] as const;
+const KNOWN_COMMANDS = ["new", "compact", "stop", "settings", "restart", "checkupdate"] as const;
 
 /**
  * Parse and handle chat commands.

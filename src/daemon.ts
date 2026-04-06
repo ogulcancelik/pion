@@ -29,6 +29,7 @@ import {
 	buildStartupRecoveryMessage,
 	dedupeRecoveryTargets,
 } from "./core/recovery.js";
+import { RepoUpdateChecker, formatRepoUpdateStatus } from "./core/repo-update.js";
 import { Router } from "./core/router.js";
 import { Runner, getUserFacingErrorMessage } from "./core/runner.js";
 import {
@@ -57,6 +58,7 @@ class Daemon {
 	private debounceMs: number;
 	private runtimeState: DaemonRuntimeState;
 	private runtimeEvents: RuntimeEventBus;
+	private updateChecker: RepoUpdateChecker;
 	private runtimeInspector: RuntimeInspectorStore;
 	private runtimeInspectorServer: RuntimeInspectorServer;
 	private cronJobStore: CronJobStore;
@@ -92,6 +94,11 @@ class Daemon {
 		const dataDir = config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
 		this.runtimeEvents = new RuntimeEventBus(dataDir);
 		this.runtimeInspector = new RuntimeInspectorStore(dataDir);
+		this.updateChecker = new RepoUpdateChecker({
+			stateDir: dataDir,
+			enabled: config.updateCheck?.enabled,
+			repoPath: config.updateCheck?.repoPath,
+		});
 		this.runtimeInspectorServer = new RuntimeInspectorServer(this.runtimeInspector, dataDir);
 		this.runtimeEvents.subscribe((event) => this.runtimeInspector.handleRuntimeEvent(event));
 		this.cronJobStore = new CronJobStore({ dataDir });
@@ -366,6 +373,7 @@ class Daemon {
 
 		// Merge all buffered messages into one
 		const message = mergeMessages(messages);
+		let runnerMessage = message;
 
 		if (messages.length > 1) {
 			console.log(`   📦 Merged ${messages.length} messages for ${agentName}`);
@@ -399,6 +407,22 @@ class Daemon {
 		try {
 			if (provider.sendTyping) {
 				await provider.sendTyping(message.chatId);
+			}
+
+			try {
+				const updateNote = await this.updateChecker.getAutomaticSystemNote(message.timestamp);
+				if (updateNote) {
+					runnerMessage = {
+						...message,
+						text: `${updateNote}\n\n${message.text}`,
+					};
+					console.log("   ℹ️ Injected repo update note into user turn");
+				}
+			} catch (error) {
+				console.warn(
+					"   ⚠️ Repo update check failed:",
+					error instanceof Error ? error.message : error,
+				);
 			}
 
 			if (!this.isCurrentGeneration(contextKey, gen)) {
@@ -511,7 +535,7 @@ class Daemon {
 			const pendingSends: Promise<void>[] = [];
 			let messagesSent = 0;
 			const result = await this.runner.process(
-				message,
+				runnerMessage,
 				{
 					agentConfig,
 					contextKey,
@@ -809,6 +833,16 @@ class Daemon {
 					break;
 				}
 
+				case "checkupdate": {
+					const status = await this.updateChecker.checkNow();
+					await provider.send({
+						chatId,
+						text: formatRepoUpdateStatus(status),
+					});
+					console.log(`   ✓ Repo update status: ${status.kind}`);
+					break;
+				}
+
 				case "settings": {
 					const sessionFile = this.runner.getSessionFile(contextKey);
 					const hasSession = existsSync(sessionFile);
@@ -840,7 +874,7 @@ class Daemon {
 					} else {
 						await provider.send({
 							chatId,
-							text: `${settingsText}\n\nAvailable controls: /new, /compact, /stop, /restart`,
+							text: `${settingsText}\n\nAvailable controls: /new, /compact, /stop, /checkupdate, /restart`,
 						});
 					}
 					console.log("   ✓ Settings shown");

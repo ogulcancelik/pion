@@ -108,6 +108,11 @@ describe("Daemon components", () => {
 			expect(result).toEqual({ command: "restart", args: "" });
 		});
 
+		test("/checkupdate command is parsed correctly", () => {
+			const result = commands.parse("/checkupdate");
+			expect(result).toEqual({ command: "checkupdate", args: "" });
+		});
+
 		test("native settings keyboard labels are parsed correctly", () => {
 			expect(commands.parse("🆕 new session")).toEqual({ command: "new", args: "" });
 			expect(commands.parse("🧠 compact")).toEqual({ command: "compact", args: "" });

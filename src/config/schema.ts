@@ -17,10 +17,19 @@ export interface Config {
 	debounceMs?: number;
 	/** Default timeout for bash tool calls in seconds (default: 300). */
 	bashTimeoutSec?: number;
+	/** Repo update awareness and manual /checkupdate behavior. Enabled by default. */
+	updateCheck?: UpdateCheckConfig;
 	telegram?: TelegramConfig;
 	cron?: CronConfig;
 	agents: Record<string, AgentConfig>;
 	routes: Route[];
+}
+
+export interface UpdateCheckConfig {
+	/** Enable repo update awareness and /checkupdate (default: true). */
+	enabled?: boolean;
+	/** Repo checkout to inspect (default: the Pion repo containing the daemon sources). */
+	repoPath?: string;
 }
 
 export interface CronConfig {
@@ -107,6 +116,20 @@ export function validateConfig(config: unknown): string[] {
 			errors.push("bashTimeoutSec must be a finite number");
 		} else if ((cfg.bashTimeoutSec as number) <= 0) {
 			errors.push("bashTimeoutSec must be greater than 0");
+		}
+	}
+
+	if (cfg.updateCheck !== undefined) {
+		if (typeof cfg.updateCheck !== "object" || cfg.updateCheck === null) {
+			errors.push("updateCheck must be an object");
+		} else {
+			const updateCheck = cfg.updateCheck as Record<string, unknown>;
+			if (updateCheck.enabled !== undefined && typeof updateCheck.enabled !== "boolean") {
+				errors.push("updateCheck.enabled must be a boolean");
+			}
+			if (updateCheck.repoPath !== undefined && typeof updateCheck.repoPath !== "string") {
+				errors.push("updateCheck.repoPath must be a string");
+			}
 		}
 	}
 

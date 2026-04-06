@@ -47,11 +47,17 @@ describe("Commands", () => {
 			expect(result).toEqual({ command: "restart", args: "" });
 		});
 
+		test("parses /checkupdate command", () => {
+			const result = commands.parse("/checkupdate");
+			expect(result).toEqual({ command: "checkupdate", args: "" });
+		});
+
 		test("is case insensitive", () => {
 			expect(commands.parse("/NEW")).toEqual({ command: "new", args: "" });
 			expect(commands.parse("/Compact")).toEqual({ command: "compact", args: "" });
 			expect(commands.parse("/Settings")).toEqual({ command: "settings", args: "" });
 			expect(commands.parse("/Restart")).toEqual({ command: "restart", args: "" });
+			expect(commands.parse("/CheckUpdate")).toEqual({ command: "checkupdate", args: "" });
 		});
 
 		test("recognizes native settings keyboard labels", () => {

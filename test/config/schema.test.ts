@@ -178,6 +178,31 @@ describe("validateConfig", () => {
 		expect(errors).toHaveLength(0);
 	});
 
+	test("accepts updateCheck config", () => {
+		const errors = validateConfig({
+			updateCheck: {
+				enabled: true,
+				repoPath: "/tmp/pion",
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test("rejects invalid updateCheck config", () => {
+		const errors = validateConfig({
+			updateCheck: {
+				enabled: "yes",
+				repoPath: 123,
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("updateCheck.enabled must be a boolean");
+		expect(errors).toContain("updateCheck.repoPath must be a string");
+	});
+
 	test("rejects non-boolean telegram status clearOnComplete flag", () => {
 		const errors = validateConfig({
 			telegram: {

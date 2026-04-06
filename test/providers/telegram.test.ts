@@ -390,6 +390,10 @@ describe("TelegramProvider", () => {
 					{ command: "stop", description: "stop the current run" },
 					{ command: "new", description: "clear the session and start fresh" },
 					{ command: "compact", description: "summarize and continue in a fresh session" },
+					{
+						command: "checkupdate",
+						description: "check whether this Pion checkout is behind upstream",
+					},
 					{ command: "settings", description: "show runner controls and context info" },
 					{ command: "restart", description: "restart the daemon and reload config" },
 				],

@@ -57,11 +57,13 @@ Normal message path:
 3. Commands (`/new`, `/compact`, `/stop`) are intercepted immediately
 4. Non-command messages are buffered by the debouncer unless `debounceMs: 0`
 5. Buffered messages for the same context are merged when the quiet window expires
-6. If a run is already active, newer work supersedes the old generation
-7. Attachments are materialized to temp files under `/tmp/pion-media/<context>/`
-8. Runner resumes or creates the pi agent session
-9. Session output streams back to Telegram
-10. Runtime events are recorded and the SQLite sidecar is synced
+6. On the first real user turn of a new day, the daemon can run a lightweight git fetch/check for the deployed Pion repo
+7. If upstream is ahead and that upstream state has not already been surfaced, the daemon prepends a hidden `[SYSTEM]` note to that user turn
+8. If a run is already active, newer work supersedes the old generation
+9. Attachments are materialized to temp files under `/tmp/pion-media/<context>/`
+10. Runner resumes or creates the pi agent session
+11. Session output streams back to Telegram
+12. Runtime events are recorded and the SQLite sidecar is synced
 
 ### Commands
 
@@ -70,6 +72,7 @@ Normal message path:
 | `/new` | archive the current session and start fresh |
 | `/compact [focus]` | summarize current conversation and prime a fresh session |
 | `/stop` | supersede the active run |
+| `/checkupdate` | run an on-demand git update check for the deployed Pion checkout |
 
 Commands bypass the debounce buffer and cancel any buffered messages for that context.
 
