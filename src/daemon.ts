@@ -36,6 +36,8 @@ import {
 	RuntimeEventBus,
 	createMessageReceivedRuntimeEvent,
 } from "./core/runtime-events.js";
+import { RuntimeInspectorServer } from "./core/runtime-inspector-ipc.js";
+import { RuntimeInspectorStore } from "./core/runtime-inspector.js";
 import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-state.js";
 import { loadSkills } from "./core/skills.js";
 import { ensureWorkspace } from "./core/workspace.js";
@@ -56,6 +58,8 @@ class Daemon {
 	private debounceMs: number;
 	private runtimeState: DaemonRuntimeState;
 	private runtimeEvents: RuntimeEventBus;
+	private runtimeInspector: RuntimeInspectorStore;
+	private runtimeInspectorServer: RuntimeInspectorServer;
 	private cronJobStore: CronJobStore;
 	private cronScheduler: CronScheduler;
 	private recoveryInfo: StartupRecoveryInfo | null = null;
@@ -88,6 +92,9 @@ class Daemon {
 		this.router = new Router(config);
 		const dataDir = config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
 		this.runtimeEvents = new RuntimeEventBus(dataDir);
+		this.runtimeInspector = new RuntimeInspectorStore(dataDir);
+		this.runtimeInspectorServer = new RuntimeInspectorServer(this.runtimeInspector, dataDir);
+		this.runtimeEvents.subscribe((event) => this.runtimeInspector.handleRuntimeEvent(event));
 		this.cronJobStore = new CronJobStore({ dataDir });
 		this.runner = new Runner({
 			dataDir: config.dataDir,
@@ -148,6 +155,9 @@ class Daemon {
 			ensureWorkspace(this.config.cron.agent.workspace);
 			console.log("✓ Workspace ready: cron.agent");
 		}
+
+		await this.runtimeInspectorServer.start();
+		console.log("✓ Runtime inspector socket ready");
 
 		// Start Telegram if configured
 		if (this.config.telegram?.botToken) {
@@ -215,6 +225,13 @@ class Daemon {
 			return;
 		}
 
+		this.runtimeInspector.registerContext({
+			agentName: route.agentName ?? "unknown",
+			contextKey: route.contextKey,
+			provider: action.provider,
+			chatId: action.chatId,
+		});
+
 		console.log(`   → Action: ${action.actionId}`);
 		const cancelledMessages = this.debouncer.cancel(route.contextKey);
 		if (cancelledMessages.length > 0) {
@@ -254,6 +271,13 @@ class Daemon {
 
 		const provider = this.getProvider(message.provider);
 		if (!provider) return;
+
+		this.runtimeInspector.registerContext({
+			agentName: route.agentName ?? "unknown",
+			contextKey: route.contextKey,
+			provider: message.provider,
+			chatId: message.chatId,
+		});
 
 		// Check for commands first — commands bypass debounce entirely
 		const cmd = this.commands.parse(message.text);
@@ -843,6 +867,8 @@ class Daemon {
 			}
 		}
 
+		await this.runtimeInspectorServer.stop();
+		this.runtimeEvents.close();
 		this.runtimeState.markShutdown();
 		console.log("✓ Daemon stopped");
 	}
