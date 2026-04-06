@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Compactor, extractConversation } from "../../src/core/compactor.js";
+import {
+	Compactor,
+	buildContinuationSeedPrompt,
+	buildHandoffPrompt,
+	extractConversation,
+	extractHandoffBlock,
+	shouldAutoCompact,
+} from "../../src/core/compactor.js";
 
 describe("Compactor", () => {
 	const testDir = join(import.meta.dir, ".test-compactor");
@@ -229,6 +236,45 @@ describe("Compactor", () => {
 			const prompt = buildSummaryPrompt(messages, "the API design");
 
 			expect(prompt).toContain("Focus especially on: the API design");
+		});
+	});
+
+	describe("handoff helpers", () => {
+		test("buildHandoffPrompt includes focus, pending user message, and delimiter instructions", () => {
+			const prompt = buildHandoffPrompt({
+				focus: "today's inbox triage",
+				pendingUserMessage: "check my emails and tell me what happened today",
+			});
+
+			expect(prompt).toContain("today's inbox triage");
+			expect(prompt).toContain("Pending user request:");
+			expect(prompt).toContain("check my emails and tell me what happened today");
+			expect(prompt).toContain("<<<PI_HANDOFF_START>>>");
+			expect(prompt).toContain("<<<PI_HANDOFF_END>>>");
+			expect(prompt).toContain("Do not answer the pending user request yet");
+		});
+
+		test("extractHandoffBlock returns the last delimited handoff body", () => {
+			const body = extractHandoffBlock(
+				"before\n<<<PI_HANDOFF_START>>>\none\n<<<PI_HANDOFF_END>>>\nafter\n<<<PI_HANDOFF_START>>>\ntwo\n<<<PI_HANDOFF_END>>>",
+			);
+			expect(body).toBe("two");
+		});
+
+		test("buildContinuationSeedPrompt includes archived session recall hint", () => {
+			const seed = buildContinuationSeedPrompt(
+				"## Context\nWe were triaging mail.",
+				"/tmp/archive/telegram-contact-1.jsonl",
+			);
+			expect(seed).toContain("[Previous conversation handoff]");
+			expect(seed).toContain('session_query("/tmp/archive/telegram-contact-1.jsonl"');
+			expect(seed).toContain("We were triaging mail.");
+		});
+
+		test("shouldAutoCompact triggers at or above threshold", () => {
+			expect(shouldAutoCompact(89)).toBe(false);
+			expect(shouldAutoCompact(90)).toBe(true);
+			expect(shouldAutoCompact(95)).toBe(true);
 		});
 	});
 

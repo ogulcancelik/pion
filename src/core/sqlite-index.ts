@@ -272,6 +272,19 @@ export class PionSqliteIndex {
 			| SessionHeaderEntry
 			| undefined;
 		const messages = entries.filter((entry) => entry.type === "message") as SessionMessageEntry[];
+		const dedupedMessages: SessionMessageEntry[] = [];
+		const seenMessageIds = new Set<string>();
+		for (const [messageIndex, entry] of messages.entries()) {
+			const entryId = entry.id || `legacy-message-${messageIndex}`;
+			if (seenMessageIds.has(entryId)) {
+				console.warn(
+					`[sqlite-index] Skipping duplicate session entry id ${entryId} in ${sessionFile}`,
+				);
+				continue;
+			}
+			seenMessageIds.add(entryId);
+			dedupedMessages.push(entry);
+		}
 
 		const transaction = this.db.transaction(() => {
 			this.db.query("DELETE FROM sessions WHERE session_file = ?1").run(sessionFile);
@@ -289,12 +302,12 @@ export class PionSqliteIndex {
 					sessionFile,
 					header?.id ?? null,
 					header?.cwd ?? null,
-					header?.timestamp ?? messages[0]?.timestamp ?? null,
-					messages.at(-1)?.timestamp ?? header?.timestamp ?? null,
-					messages.length,
+					header?.timestamp ?? dedupedMessages[0]?.timestamp ?? null,
+					dedupedMessages.at(-1)?.timestamp ?? header?.timestamp ?? null,
+					dedupedMessages.length,
 				);
 
-			for (const [messageIndex, entry] of messages.entries()) {
+			for (const [messageIndex, entry] of dedupedMessages.entries()) {
 				const entryId = entry.id || `legacy-message-${messageIndex}`;
 				const entryTimestamp = resolveEntryTimestamp(entry, header?.timestamp);
 				const message = entry.message;

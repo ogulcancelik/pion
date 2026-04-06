@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { loadConfig } from "./config/loader.js";
 import type { Config } from "./config/schema.js";
 import { Commands } from "./core/commands.js";
-import { Compactor } from "./core/compactor.js";
+import { shouldAutoCompact } from "./core/compactor.js";
 import { CronJobStore } from "./core/cron-jobs.js";
 import { CronScheduler } from "./core/cron-scheduler.js";
 import { buildCronPromptBlock, createCronTools } from "./core/cron-tools.js";
@@ -53,7 +53,6 @@ class Daemon {
 	private router: Router;
 	private runner: Runner;
 	private commands: Commands;
-	private compactor: Compactor;
 	private debouncer: MessageDebouncer;
 	private debounceMs: number;
 	private runtimeState: DaemonRuntimeState;
@@ -105,7 +104,6 @@ class Daemon {
 			runtimeEventBus: this.runtimeEvents,
 		});
 		this.commands = new Commands();
-		this.compactor = new Compactor({ authPath: config.authPath });
 		this.debouncer = new MessageDebouncer({
 			timeoutMs: this.debounceMs,
 			onFlush: (contextKey, messages) => this.processMessages(contextKey, messages),
@@ -395,15 +393,6 @@ class Daemon {
 			messageId: message.id,
 			messagePreview: message.text.slice(0, 200),
 		});
-		this.emitRuntimeEvent({
-			source: "pion",
-			contextKey,
-			type: "runtime_processing_start",
-			agentName,
-			provider: message.provider,
-			chatId: message.chatId,
-			messageId: message.id,
-		});
 
 		let typingInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -412,7 +401,6 @@ class Daemon {
 				await provider.sendTyping(message.chatId);
 			}
 
-			// Check: were we superseded during sendTyping?
 			if (!this.isCurrentGeneration(contextKey, gen)) {
 				console.log("   ⏹️ Superseded before processing");
 				this.emitRuntimeEvent({
@@ -426,14 +414,12 @@ class Daemon {
 				return;
 			}
 
-			// Typing indicator refresh (Telegram typing lasts ~5s)
 			typingInterval = setInterval(async () => {
 				if (provider.sendTyping && !this.shuttingDown) {
 					await provider.sendTyping(message.chatId).catch(() => {});
 				}
 			}, 4000);
 
-			// Create provider-specific tools
 			const customTools =
 				message.provider === "telegram" && this.telegramProvider
 					? [
@@ -455,8 +441,9 @@ class Daemon {
 							}),
 						]
 					: [];
+			const agentConfig = this.buildForegroundAgentConfig(agent);
+			const isCancelled = () => !this.isCurrentGeneration(contextKey, gen);
 
-			// Check again: were we superseded during tool setup?
 			if (!this.isCurrentGeneration(contextKey, gen)) {
 				console.log("   ⏹️ Superseded before processing");
 				this.emitRuntimeEvent({
@@ -470,17 +457,63 @@ class Daemon {
 				return;
 			}
 
-			// Track messages sent so first one gets replyTo
+			const contextUsage = await this.runner.getContextUsage({
+				agentConfig,
+				contextKey,
+				customTools,
+			});
+			if (shouldAutoCompact(contextUsage?.percent)) {
+				console.log(`   🧠 Auto-compacting at ${Math.round(contextUsage?.percent ?? 0)}%`);
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_compaction_start",
+					provider: message.provider,
+					chatId: message.chatId,
+					trigger: "automatic",
+				});
+				await this.runner.compact(
+					{
+						agentConfig,
+						contextKey,
+						customTools,
+					},
+					{
+						isCancelled,
+						pendingUserMessage: message.text,
+					},
+				);
+			}
+
+			if (!this.isCurrentGeneration(contextKey, gen)) {
+				console.log("   ⏹️ Superseded before processing");
+				this.emitRuntimeEvent({
+					source: "pion",
+					contextKey,
+					type: "runtime_processing_complete",
+					outcome: "superseded",
+					messagesSent: 0,
+					responseLength: 0,
+				});
+				return;
+			}
+
+			this.emitRuntimeEvent({
+				source: "pion",
+				contextKey,
+				type: "runtime_processing_start",
+				agentName,
+				provider: message.provider,
+				chatId: message.chatId,
+				messageId: message.id,
+			});
+
 			const pendingSends: Promise<void>[] = [];
 			let messagesSent = 0;
-
-			// Process with agent — onMessage fires for each complete text block
-			// (text before tool calls, between tool calls, and final text)
-			const isCancelled = () => !this.isCurrentGeneration(contextKey, gen);
 			const result = await this.runner.process(
 				message,
 				{
-					agentConfig: this.buildForegroundAgentConfig(agent),
+					agentConfig,
 					contextKey,
 					customTools,
 				},
@@ -700,26 +733,64 @@ class Daemon {
 				}
 
 				case "compact": {
-					// Supersede active work before compacting
 					await this.supersedeActiveWork(contextKey, "compact");
+					if (!agent) {
+						await provider.send({
+							chatId,
+							text: "No agent configured for this context.",
+						});
+						break;
+					}
 
 					const sessionFile = this.runner.getSessionFile(contextKey);
+					if (!existsSync(sessionFile)) {
+						await provider.send({
+							chatId,
+							text: "Nothing to compact yet.",
+						});
+						console.log("   ⚠️ Nothing to compact");
+						break;
+					}
 
-					// Show typing while summarizing
+					this.emitRuntimeEvent({
+						source: "pion",
+						contextKey,
+						type: "runtime_compaction_start",
+						provider: provider.type,
+						chatId,
+						trigger: "manual",
+					});
+
 					if (provider.sendTyping) {
 						await provider.sendTyping(chatId);
 					}
 
-					// Summarize with Haiku
-					console.log("   ⏳ Summarizing with Haiku...");
-					const summary = await this.compactor.summarize(sessionFile, cmd.args || undefined);
+					console.log("   ⏳ Generating hidden handoff...");
+					await this.runner.compact({
+						agentConfig: this.buildForegroundAgentConfig(agent),
+						contextKey,
+					});
 
-					// Prime new session with summary
-					this.runner.primeSessionWithSummary(contextKey, summary, agent?.cwd ?? agent?.workspace);
-
+					const text = "✓ Session compacted. Fresh context ready.";
 					await provider.send({
 						chatId,
-						text: `✓ Session compacted.\n\n<b>Summary preserved:</b>\n${summary}`,
+						text,
+					});
+					this.emitRuntimeEvent({
+						source: "pion",
+						contextKey,
+						type: "runtime_output_sent",
+						provider: provider.type,
+						chatId,
+						text,
+					});
+					this.emitRuntimeEvent({
+						source: "pion",
+						contextKey,
+						type: "runtime_processing_complete",
+						outcome: "completed",
+						messagesSent: 1,
+						responseLength: text.length,
 					});
 					console.log("   ✓ Session compacted");
 					break;

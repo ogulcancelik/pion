@@ -19,6 +19,11 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { getAuthPath } from "./auth.js";
+import {
+	buildContinuationSeedPrompt,
+	buildHandoffPrompt,
+	extractHandoffBlock,
+} from "./compactor.js";
 import { prepareInboundMessage } from "./inbound.js";
 import { expandTilde, homeDir } from "./paths.js";
 import { PionResourceLoader } from "./pion-resource-loader.js";
@@ -62,6 +67,17 @@ export interface ProcessResult {
 	response: string;
 	/** System warnings to send before the response */
 	warnings: string[];
+}
+
+export interface CompactSessionOptions {
+	focus?: string;
+	isCancelled?: () => boolean;
+	pendingUserMessage?: string;
+}
+
+export interface CompactSessionResult {
+	archivedSessionFile?: string;
+	handoff: string;
 }
 
 export interface RunnerProcessOptions {
@@ -293,12 +309,7 @@ export class Runner {
 		context: RunnerContext,
 		options: RunnerProcessOptions = {},
 	): Promise<ProcessResult> {
-		let session = this.sessions.get(context.contextKey);
-
-		if (!session) {
-			session = await this.createSession(context);
-			this.sessions.set(context.contextKey, session);
-		}
+		const session = await this.ensureSession(context);
 
 		if (options.isCancelled?.()) return { response: "", warnings: [] };
 
@@ -360,6 +371,41 @@ export class Runner {
 		return this.runtimeEventBus.getEventLogFile(contextKey);
 	}
 
+	async getContextUsage(context: RunnerContext): Promise<{ percent: number } | null> {
+		const session = await this.ensureSession(context);
+		return session.getContextUsage();
+	}
+
+	async compact(
+		context: RunnerContext,
+		options: CompactSessionOptions = {},
+	): Promise<CompactSessionResult> {
+		const session = await this.ensureSession(context);
+		const handoff = await session.generateHandoff(options);
+		if (options.isCancelled?.()) {
+			return { handoff };
+		}
+		const archivedSessionFile = this.archiveAndClearSession(context.contextKey);
+		this.primeSessionWithUserPrompt(
+			context.contextKey,
+			buildContinuationSeedPrompt(handoff, archivedSessionFile),
+			context.agentConfig.cwd ?? context.agentConfig.workspace,
+		);
+		return { archivedSessionFile, handoff };
+	}
+
+	private async ensureSession(context: RunnerContext): Promise<RunnerSession> {
+		let session = this.sessions.get(context.contextKey);
+		if (!session) {
+			session = await this.createSession(context);
+			this.sessions.set(context.contextKey, session);
+		}
+		if (typeof (session as { initialize?: () => Promise<void> }).initialize === "function") {
+			await (session as { initialize: () => Promise<void> }).initialize();
+		}
+		return session;
+	}
+
 	private async createSession(context: RunnerContext): Promise<RunnerSession> {
 		// Build session file path from context key
 		// telegram:contact:123 → sessions/telegram-contact-123.jsonl
@@ -391,34 +437,35 @@ export class Runner {
 	 * Clear a session (memory + archive file) and reset warnings.
 	 */
 	clearSession(contextKey: string): boolean {
-		// Clear memory
-		const hadSession = this.sessions.delete(contextKey);
-
-		// Archive file instead of deleting
-		const sessionFile = this.getSessionFile(contextKey);
-		if (existsSync(sessionFile)) {
-			this.archiveSession(sessionFile, contextKey);
-		}
-
-		// Reset warning state
-		this.warningState.delete(contextKey);
-
+		const hadSession = this.sessions.has(contextKey);
+		this.archiveAndClearSession(contextKey);
 		return hadSession;
+	}
+
+	private archiveAndClearSession(contextKey: string): string | undefined {
+		this.sessions.delete(contextKey);
+		const sessionFile = this.getSessionFile(contextKey);
+		const archivedSessionFile = existsSync(sessionFile)
+			? this.archiveSession(sessionFile, contextKey)
+			: undefined;
+		this.warningState.delete(contextKey);
+		return archivedSessionFile;
 	}
 
 	/**
 	 * Archive a session file with its creation timestamp.
 	 */
-	private archiveSession(sessionFile: string, contextKey: string): void {
+	private archiveSession(sessionFile: string, contextKey: string): string | undefined {
 		try {
 			// Get creation time from first line
 			const content = readFileSync(sessionFile, "utf-8");
 			const firstLine = content.split("\n")[0];
 			if (!firstLine) {
 				// Empty file, just delete
-				renameSync(sessionFile, `${sessionFile}.empty`);
+				const emptyPath = `${sessionFile}.empty`;
+				renameSync(sessionFile, emptyPath);
 				this.runtimeEventBus.removeSessionFile(sessionFile);
-				return;
+				return emptyPath;
 			}
 
 			const firstEntry = JSON.parse(firstLine);
@@ -444,23 +491,16 @@ export class Runner {
 			this.runtimeEventBus.removeSessionFile(sessionFile);
 			this.runtimeEventBus.syncSessionFile(finalPath);
 			console.log(`[runner] Archived session to ${finalPath}`);
+			return finalPath;
 		} catch (err) {
 			// If archiving fails, log but don't block
 			console.error("[runner] Failed to archive session:", err);
+			return undefined;
 		}
 	}
 
-	/**
-	 * Start a new session with an initial summary message.
-	 * Used after compaction.
-	 *
-	 * Writes in pi-agent session format so SessionManager picks it up.
-	 */
-	primeSessionWithSummary(contextKey: string, summary: string, cwd?: string): void {
-		// Clear existing session first
+	primeSessionWithUserPrompt(contextKey: string, promptText: string, cwd?: string): void {
 		this.clearSession(contextKey);
-
-		// Write in pi-agent JSONL format
 		const sessionFile = this.getSessionFile(contextKey);
 		const timestamp = new Date().toISOString();
 		const id = Math.random().toString(36).slice(2, 10);
@@ -474,7 +514,6 @@ export class Runner {
 			cwd: cwd ? expandTilde(cwd) : process.cwd(),
 		};
 
-		// Summary as user message in pi-agent format
 		const messageEntry = {
 			type: "message",
 			id: `summary-${id}`,
@@ -482,16 +521,37 @@ export class Runner {
 			timestamp,
 			message: {
 				role: "user",
-				content: [{ type: "text", text: `[Previous session summary]\n\n${summary}` }],
+				content: [{ type: "text", text: promptText }],
+				timestamp: Date.now(),
+			},
+		};
+		const assistantEntry = {
+			type: "message",
+			id: `summary-ack-${id}`,
+			parentId: messageEntry.id,
+			timestamp,
+			message: {
+				role: "assistant",
+				content: [{ type: "text", text: "[Runtime note: handoff loaded for the next turn.]" }],
 				timestamp: Date.now(),
 			},
 		};
 
 		writeFileSync(
 			sessionFile,
-			`${JSON.stringify(sessionEntry)}\n${JSON.stringify(messageEntry)}\n`,
+			`${JSON.stringify(sessionEntry)}\n${JSON.stringify(messageEntry)}\n${JSON.stringify(assistantEntry)}\n`,
 		);
 		this.runtimeEventBus.syncSessionFile(sessionFile);
+	}
+
+	/**
+	 * Start a new session with an initial summary message.
+	 * Used after compaction.
+	 *
+	 * Writes in pi-agent session format so SessionManager picks it up.
+	 */
+	primeSessionWithSummary(contextKey: string, summary: string, cwd?: string): void {
+		this.primeSessionWithUserPrompt(contextKey, `[Previous session summary]\n\n${summary}`, cwd);
 	}
 
 	appendAssistantMessage(contextKey: string, text: string, cwd?: string): void {
@@ -670,6 +730,17 @@ class RunnerSession {
 		await this.agentSession.abort();
 	}
 
+	async generateHandoff(options: CompactSessionOptions = {}): Promise<string> {
+		const response = await this.prompt(buildHandoffPrompt(options), undefined, {
+			isCancelled: options.isCancelled,
+		});
+		const handoff = extractHandoffBlock(response);
+		if (!handoff) {
+			throw new Error("Compaction handoff did not include a valid delimited block");
+		}
+		return handoff;
+	}
+
 	async prompt(
 		text: string,
 		images?: Array<{ type: "image"; data: string; mimeType: string }>,
@@ -778,7 +849,7 @@ class RunnerSession {
 		this.agentSession.agent.state.messages = this.sessionManager.buildSessionContext().messages;
 	}
 
-	private async initialize(): Promise<void> {
+	async initialize(): Promise<void> {
 		const resolvedCwd = resolveAgentCwd(this.config.agentConfig);
 		// Parse model string: "anthropic/claude-sonnet-4-20250514" → provider + modelId
 		const [provider, modelId] = parseModelString(this.config.agentConfig.model);

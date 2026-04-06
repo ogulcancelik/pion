@@ -196,16 +196,38 @@ export class TelegramStatusSink {
 	}
 
 	private async handlePionEvent(event: Extract<RuntimeEvent, { source: "pion" }>): Promise<void> {
+		if (event.type === "runtime_compaction_start") {
+			if (event.provider !== "telegram") return;
+			const state = this.states.get(event.contextKey) ?? {
+				chatId: event.chatId,
+				statusLine: "🧠 compacting",
+				toolLines: [],
+				sealedAfterAssistantOutput: false,
+				handlesSeen: [],
+			};
+			state.chatId = event.chatId;
+			state.statusLine = "🧠 compacting";
+			state.toolLines = [];
+			state.sealedAfterAssistantOutput = false;
+			await this.pushStatus(state);
+			this.states.set(event.contextKey, state);
+			return;
+		}
+
 		if (event.type === "runtime_processing_start") {
 			if (event.provider !== "telegram") return;
 
-			const state: TelegramStatusState = {
+			const state = this.states.get(event.contextKey) ?? {
 				chatId: event.chatId,
 				statusLine: "⚙️ working",
 				toolLines: [],
 				sealedAfterAssistantOutput: false,
 				handlesSeen: [],
 			};
+			state.chatId = event.chatId;
+			state.statusLine = "⚙️ working";
+			state.toolLines = [];
+			state.sealedAfterAssistantOutput = false;
 			await this.pushStatus(state);
 			this.states.set(event.contextKey, state);
 			return;

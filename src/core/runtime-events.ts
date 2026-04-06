@@ -49,6 +49,16 @@ export type PionRuntimeEvent =
 			timestamp: string;
 			source: "pion";
 			contextKey: string;
+			type: "runtime_compaction_start";
+			provider: ProviderType;
+			chatId: string;
+			trigger: "manual" | "automatic";
+	  }
+	| {
+			id: string;
+			timestamp: string;
+			source: "pion";
+			contextKey: string;
 			type: "runtime_messages_merged";
 			messageCount: number;
 			messageIds: string[];

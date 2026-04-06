@@ -59,6 +59,63 @@ describe("TelegramStatusSink", () => {
 		});
 	});
 
+	test("shows a compacting status bubble before processing starts", async () => {
+		const upsertStatus = mock(async (_status: StatusUpdate) => makeHandle());
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
+
+		await sink.handleEvent({
+			id: "evt-compact-1",
+			timestamp: "2026-04-02T21:00:00.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_compaction_start",
+			provider: "telegram",
+			chatId: "chat-1",
+			trigger: "automatic",
+		});
+
+		expect(upsertStatus).toHaveBeenCalledWith({
+			chatId: "chat-1",
+			text: expect.stringContaining("🧠 compacting"),
+			actions: [],
+		});
+	});
+
+	test("reuses the compacting bubble when normal processing begins after auto-compaction", async () => {
+		const handle = makeHandle();
+		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);
+		const sink = new TelegramStatusSink(
+			makeStatusProvider({
+				upsertStatus,
+				clearStatus: mock(async (_handle: StatusHandle) => {}),
+			}),
+		);
+
+		await sink.handleEvent({
+			id: "evt-compact-1",
+			timestamp: "2026-04-02T21:00:00.000Z",
+			source: "pion",
+			contextKey: "telegram:contact:user-1",
+			type: "runtime_compaction_start",
+			provider: "telegram",
+			chatId: "chat-1",
+			trigger: "automatic",
+		});
+		await sink.handleEvent(makeProcessingStart());
+
+		expect(upsertStatus.mock.calls[1]?.[0]).toEqual({
+			chatId: "chat-1",
+			handle,
+			text: expect.stringContaining("⚙️ working"),
+			actions: [],
+		});
+	});
+
 	test("appends compact tool call summaries with tool names and key params", async () => {
 		const handle = makeHandle();
 		const upsertStatus = mock(async (status: StatusUpdate) => status.handle ?? handle);

@@ -28,7 +28,13 @@ export interface RuntimeInspectorCompletionSnapshot {
 	errorMessage?: string;
 }
 
-export type RuntimeInspectorStatus = "idle" | "buffered" | "processing" | "superseded" | "failed";
+export type RuntimeInspectorStatus =
+	| "idle"
+	| "buffered"
+	| "compacting"
+	| "processing"
+	| "superseded"
+	| "failed";
 
 export interface RuntimeInspectorContextSnapshot {
 	contextKey: string;
@@ -187,6 +193,12 @@ export class RuntimeInspectorStore {
 				break;
 			case "runtime_messages_merged":
 				context.pendingMessageCount = 0;
+				break;
+			case "runtime_compaction_start":
+				context.provider = event.provider;
+				context.chatId = event.chatId;
+				context.status = "compacting";
+				context.live = true;
 				break;
 			case "runtime_processing_start":
 				context.agentName = event.agentName;

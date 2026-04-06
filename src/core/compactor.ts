@@ -9,6 +9,9 @@ import { getAuthPath } from "./auth.js";
 
 // Hardcoded summarizer model
 const SUMMARIZER_MODEL = "anthropic/claude-haiku-4-5";
+export const HANDOFF_START = "<<<PI_HANDOFF_START>>>";
+export const HANDOFF_END = "<<<PI_HANDOFF_END>>>";
+export const AUTO_COMPACTION_THRESHOLD_PERCENT = 90;
 
 export interface ConversationMessage {
 	role: "user" | "assistant";
@@ -179,9 +182,72 @@ Be brief but preserve important details the assistant would need to continue hel
 	return prompt;
 }
 
+export interface HandoffPromptOptions {
+	focus?: string;
+	pendingUserMessage?: string;
+}
+
 export interface CompactorConfig {
 	/** Path to auth storage (default: ~/.pion/auth.json) */
 	authPath?: string;
+}
+
+export function shouldAutoCompact(
+	contextUsagePercent: number | null | undefined,
+	thresholdPercent = AUTO_COMPACTION_THRESHOLD_PERCENT,
+): boolean {
+	return (
+		contextUsagePercent !== null &&
+		contextUsagePercent !== undefined &&
+		contextUsagePercent >= thresholdPercent
+	);
+}
+
+export function buildHandoffPrompt(options: HandoffPromptOptions = {}): string {
+	const sections = [
+		"[SYSTEM] Context is nearly full. We are handing this conversation off to a fresh session.",
+		"Do not answer the pending user request yet.",
+		"Do not call tools.",
+		"Write a concise but complete handoff for the next agent using the current session context.",
+		"Include: current goals, important facts, decisions, unfinished work, open questions, and immediate next actions.",
+		`Return exactly one final block using these standalone delimiters on their own lines:\n${HANDOFF_START}\n...your handoff...\n${HANDOFF_END}`,
+		"Do not use those delimiters anywhere else.",
+	];
+
+	if (options.focus) {
+		sections.push(`Focus especially on: ${options.focus}`);
+	}
+	if (options.pendingUserMessage) {
+		sections.push(`Pending user request:\n${options.pendingUserMessage}`);
+	}
+
+	return sections.join("\n\n");
+}
+
+export function extractHandoffBlock(text: string): string | undefined {
+	const pattern = new RegExp(`${HANDOFF_START}\\s*([\\s\\S]*?)\\s*${HANDOFF_END}`, "g");
+	let last: string | undefined;
+	for (const match of text.matchAll(pattern)) {
+		const body = match[1]?.trim();
+		if (body) {
+			last = body;
+		}
+	}
+	return last;
+}
+
+export function buildContinuationSeedPrompt(handoff: string, archivedSessionFile?: string): string {
+	if (!archivedSessionFile) {
+		return `[Previous conversation handoff]\n\n${handoff.trim()}`;
+	}
+	return [
+		"[Previous conversation handoff]",
+		"",
+		`Parent session: ${archivedSessionFile}`,
+		`Use session_query(\"${archivedSessionFile}\", "<question>") if you need more detail from the previous session.`,
+		"",
+		handoff.trim(),
+	].join("\n");
 }
 
 /**

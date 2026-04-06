@@ -210,10 +210,9 @@ describe("Runner", () => {
 			const content = readFileSync(sessionFile, "utf-8");
 			const lines = content.trim().split("\n");
 
-			// Should have exactly 2 lines: session header + user message
-			expect(lines.length).toBe(2);
+			// Should have exactly 3 lines: session header + user handoff + hidden assistant ack
+			expect(lines.length).toBe(3);
 
-			// Each line should be valid JSON
 			for (const line of lines) {
 				expect(() => JSON.parse(line)).not.toThrow();
 			}
@@ -250,7 +249,9 @@ describe("Runner", () => {
 
 			const sessionFile = runner.getSessionFile("test:summary:wrap");
 			const content = readFileSync(sessionFile, "utf-8");
-			const secondLine = JSON.parse(content.split("\n")[1] || "{}");
+			const lines = content.split("\n");
+			const secondLine = JSON.parse(lines[1] || "{}");
+			const thirdLine = JSON.parse(lines[2] || "{}");
 
 			expect(secondLine.type).toBe("message");
 			expect(secondLine.id).toMatch(/^summary-/);
@@ -258,6 +259,10 @@ describe("Runner", () => {
 			expect(secondLine.message.content).toBeArrayOfSize(1);
 			expect(secondLine.message.content[0].type).toBe("text");
 			expect(secondLine.message.content[0].text).toBe(`[Previous session summary]\n\n${summary}`);
+			expect(thirdLine.type).toBe("message");
+			expect(thirdLine.id).toMatch(/^summary-ack-/);
+			expect(thirdLine.parentId).toBe(secondLine.id);
+			expect(thirdLine.message.role).toBe("assistant");
 		});
 
 		test("archives existing session before priming", () => {
