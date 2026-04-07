@@ -17,6 +17,8 @@ export interface Config {
 	debounceMs?: number;
 	/** Default timeout for bash tool calls in seconds (default: 300). */
 	bashTimeoutSec?: number;
+	/** Optional dotenv-style env file loaded into tool subprocesses like bash. */
+	toolEnvFile?: string;
 	/** Repo update awareness and manual /checkupdate behavior. Enabled by default. */
 	updateCheck?: UpdateCheckConfig;
 	telegram?: TelegramConfig;
@@ -121,6 +123,10 @@ export function validateConfig(config: unknown): string[] {
 		} else if ((cfg.bashTimeoutSec as number) <= 0) {
 			errors.push("bashTimeoutSec must be greater than 0");
 		}
+	}
+
+	if (cfg.toolEnvFile !== undefined && typeof cfg.toolEnvFile !== "string") {
+		errors.push("toolEnvFile must be a string");
 	}
 
 	if (cfg.updateCheck !== undefined) {

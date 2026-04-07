@@ -99,6 +99,24 @@ describe("validateConfig", () => {
 		expect(validateConfig({ ...base, bashTimeoutSec: 5 })).toHaveLength(0);
 	});
 
+	test("accepts toolEnvFile when it is a string", () => {
+		const errors = validateConfig({
+			toolEnvFile: "~/.config/pion/env",
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toHaveLength(0);
+	});
+
+	test("rejects non-string toolEnvFile", () => {
+		const errors = validateConfig({
+			toolEnvFile: 123,
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("toolEnvFile must be a string");
+	});
+
 	test("rejects invalid bashTimeoutSec values", () => {
 		const base = {
 			agents: { main: { model: "x", systemPrompt: "y" } },

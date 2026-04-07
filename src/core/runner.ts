@@ -52,6 +52,8 @@ export interface RunnerConfig {
 	recallQueryModel?: string;
 	/** Default timeout for bash tool calls in seconds. */
 	bashTimeoutSec?: number;
+	/** Optional dotenv-style env file loaded into tool subprocesses like bash. */
+	toolEnvFile?: string;
 	/** Shared runtime event bus for Pi SDK + daemon events */
 	runtimeEventBus?: RuntimeEventBus;
 }
@@ -266,6 +268,50 @@ export function buildRuntimeErrorSystemPrompt(
 	return `${basePrompt}\n\n<System note>\nThe previous attempt failed with this runtime/provider error:\n${errorMessage}\n\nThis note is from the runtime and is not visible to the user. Continue the conversation with this in mind.${additionalGuidance ? `\n\n${additionalGuidance}` : ""}\n</System note>`;
 }
 
+export function loadToolEnvFile(envFilePath?: string): Record<string, string> {
+	if (!envFilePath) {
+		return {};
+	}
+
+	const resolvedPath = expandTilde(envFilePath);
+	if (!existsSync(resolvedPath)) {
+		return {};
+	}
+
+	const content = readFileSync(resolvedPath, "utf-8");
+	const env: Record<string, string> = {};
+
+	for (const rawLine of content.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) {
+			continue;
+		}
+
+		const normalizedLine = line.startsWith("export ") ? line.slice(7).trim() : line;
+		const equalsIndex = normalizedLine.indexOf("=");
+		if (equalsIndex <= 0) {
+			continue;
+		}
+
+		const key = normalizedLine.slice(0, equalsIndex).trim();
+		if (!key) {
+			continue;
+		}
+
+		let value = normalizedLine.slice(equalsIndex + 1).trim();
+		if (
+			(value.startsWith('"') && value.endsWith('"')) ||
+			(value.startsWith("'") && value.endsWith("'"))
+		) {
+			value = value.slice(1, -1);
+		}
+
+		env[key] = value;
+	}
+
+	return env;
+}
+
 /**
  * Runner manages pi-agent sessions and processes messages.
  *
@@ -279,6 +325,7 @@ export class Runner {
 	private runtimeEventBus: RuntimeEventBus;
 	private recallQueryModel?: string;
 	private bashTimeoutSec: number;
+	private toolEnv: Record<string, string>;
 	private sessions: Map<string, RunnerSession> = new Map();
 	private warningState: Map<string, WarningState> = new Map();
 
@@ -299,6 +346,7 @@ export class Runner {
 		this.runtimeEventBus = config.runtimeEventBus ?? new RuntimeEventBus(this.dataDir);
 		this.recallQueryModel = config.recallQueryModel;
 		this.bashTimeoutSec = config.bashTimeoutSec ?? DEFAULT_BASH_TIMEOUT_SEC;
+		this.toolEnv = loadToolEnvFile(config.toolEnvFile);
 	}
 
 	/**
@@ -421,6 +469,7 @@ export class Runner {
 			runtimeEventBus: this.runtimeEventBus,
 			recallQueryModel: this.recallQueryModel,
 			bashTimeoutSec: this.bashTimeoutSec,
+			toolEnv: this.toolEnv,
 			customTools: context.customTools,
 		});
 	}
@@ -659,6 +708,7 @@ interface RunnerSessionConfig {
 	runtimeEventBus: RuntimeEventBus;
 	recallQueryModel?: string;
 	bashTimeoutSec: number;
+	toolEnv: Record<string, string>;
 	customTools?: ToolDefinition[];
 }
 
@@ -881,6 +931,13 @@ class RunnerSession {
 		const managedBashTool = createManagedBashToolDefinition(
 			resolvedCwd,
 			this.config.bashTimeoutSec,
+			{
+				spawnHook: ({ command, cwd, env }) => ({
+					command,
+					cwd,
+					env: { ...env, ...this.config.toolEnv },
+				}),
+			},
 		);
 
 		const result = await createAgentSession({

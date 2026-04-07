@@ -108,6 +108,7 @@ class Daemon {
 			authPath: config.authPath,
 			recallQueryModel: config.recallQueryModel,
 			bashTimeoutSec: config.bashTimeoutSec,
+			toolEnvFile: config.toolEnvFile,
 			runtimeEventBus: this.runtimeEvents,
 		});
 		this.commands = new Commands();

@@ -17,6 +17,7 @@ import {
 	classifyRuntimeError,
 	createManagedBashToolDefinition,
 	findRetryBranchParentId,
+	loadToolEnvFile,
 	parseModelString,
 } from "../../src/core/runner.js";
 
@@ -51,6 +52,60 @@ describe("Runner", () => {
 				{ command: "echo hi", timeout: 15 },
 			]);
 			expect(tool.description).toContain("defaults to 300 seconds in Pion");
+		});
+
+		test("passes merged env from spawn hook into bash operations", async () => {
+			const calls: Array<{ env?: Record<string, string | undefined> }> = [];
+			const tool = createManagedBashToolDefinition("/tmp", 300, {
+				spawnHook: ({ command, cwd, env }) => ({
+					command,
+					cwd,
+					env: { ...env, MINIMAX_API_KEY: "test-key", MINIMAX_API_HOST: "https://api.minimax.io" },
+				}),
+				operations: {
+					exec: async (_command, _cwd, options) => {
+						calls.push({ env: options.env });
+						options.onData(Buffer.from("ok"));
+						return { exitCode: 0 };
+					},
+				},
+			});
+
+			await tool.execute("tool-1", { command: "echo hi" }, undefined, undefined, {} as never);
+
+			expect(calls).toHaveLength(1);
+			const firstCall = calls[0];
+			expect(firstCall).toBeDefined();
+			expect(firstCall?.env?.MINIMAX_API_KEY).toBe("test-key");
+			expect(firstCall?.env?.MINIMAX_API_HOST).toBe("https://api.minimax.io");
+		});
+	});
+
+	describe("loadToolEnvFile", () => {
+		test("loads dotenv-style entries from an env file", () => {
+			const envFile = join(testDir, "pion.env");
+			writeFileSync(
+				envFile,
+				[
+					"# comment",
+					"MINIMAX_API_KEY=test-key",
+					"MINIMAX_API_HOST=https://api.minimax.io",
+					'QUOTED_VALUE="hello world"',
+					"SPACED_VALUE='trim me'",
+				].join("\n"),
+			);
+
+			const env = loadToolEnvFile(envFile);
+			expect(env).toEqual({
+				MINIMAX_API_KEY: "test-key",
+				MINIMAX_API_HOST: "https://api.minimax.io",
+				QUOTED_VALUE: "hello world",
+				SPACED_VALUE: "trim me",
+			});
+		});
+
+		test("returns empty env when file is missing", () => {
+			expect(loadToolEnvFile(join(testDir, "missing.env"))).toEqual({});
 		});
 	});
 
