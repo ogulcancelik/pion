@@ -16,6 +16,9 @@ ExecStart=/usr/bin/bun run src/daemon.ts
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+SendSIGKILL=yes
 Environment=NODE_ENV=production
 Environment=PATH=%h/.local/share/fnm/node-versions/v22.18.0/installation/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 

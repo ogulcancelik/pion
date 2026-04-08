@@ -179,6 +179,9 @@ Type=simple
 ExecStart=%h/.bun/bin/bun run %h/Projects/pion/src/daemon.ts
 Restart=on-failure
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=15
+SendSIGKILL=yes
 
 [Install]
 WantedBy=default.target

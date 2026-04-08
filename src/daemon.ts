@@ -47,6 +47,7 @@ import { TelegramStatusSink } from "./providers/telegram-status.js";
 import { createTelegramTools } from "./providers/telegram-tools.js";
 import { TelegramProvider } from "./providers/telegram.js";
 import type { ActionMessage, Message, Provider } from "./providers/types.js";
+import { sendTypingBestEffort } from "./providers/typing.js";
 
 const DEFAULT_DEBOUNCE_MS = 5000;
 
@@ -412,9 +413,7 @@ class Daemon {
 		let typingInterval: ReturnType<typeof setInterval> | null = null;
 
 		try {
-			if (provider.sendTyping) {
-				await provider.sendTyping(message.chatId);
-			}
+			await sendTypingBestEffort(provider, message.chatId);
 
 			try {
 				const updateNote = await this.updateChecker.getAutomaticSystemNote(message.timestamp);
@@ -793,9 +792,7 @@ class Daemon {
 						trigger: "manual",
 					});
 
-					if (provider.sendTyping) {
-						await provider.sendTyping(chatId);
-					}
+					await sendTypingBestEffort(provider, chatId);
 
 					console.log("   ⏳ Generating hidden handoff...");
 					await this.runner.compact({
