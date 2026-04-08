@@ -63,6 +63,43 @@ describe("createCronTools", () => {
 		}
 	});
 
+	test("creates script jobs with commands", async () => {
+		const { store, dispose } = setupStore();
+		try {
+			const tools = createCronTools({
+				store,
+				cronAgentConfigured: true,
+				availableSkills: ["web-browse", "supervise"],
+				chatId: "chat-1",
+				contextKey: "telegram:contact:chat-1",
+				provider: "telegram",
+			});
+			const tool = tools.find((entry) => entry.name === "cronjob");
+			if (!tool) throw new Error("cronjob tool missing");
+
+			const createResult = await tool.execute(
+				"tool-script",
+				{
+					action: "create",
+					kind: "script",
+					name: "job digest",
+					schedule: "0 9 * * *",
+					command: "printf 'hello'",
+					prompt: "Review this output",
+				},
+				undefined,
+				undefined,
+				{} as ExtensionCommandContext,
+			);
+			const createText =
+				createResult.content[0]?.type === "text" ? createResult.content[0].text : "";
+			expect(createText).toContain("Created scheduled script job");
+			expect(store.listJobs()[0]?.command).toBe("printf 'hello'");
+		} finally {
+			dispose();
+		}
+	});
+
 	test("creates agent jobs without depending on chat-routing agent names and can run them immediately", async () => {
 		const { store, dispose } = setupStore();
 		let runNowJobId: string | undefined;

@@ -95,6 +95,24 @@ describe("CronJobStore", () => {
 		expect(store.getJob(job.id)).toBeUndefined();
 	});
 
+	test("persists script job command", () => {
+		const job = store.createJob(
+			{
+				kind: "script",
+				name: "job digest",
+				schedule: "0 9 * * *",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				command: "printf 'hello'",
+				prompt: "Review this output",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+
+		expect(job.kind).toBe("script");
+		expect(job.command).toBe("printf 'hello'");
+		expect(store.getJob(job.id)?.command).toBe("printf 'hello'");
+	});
+
 	test("records run output and terminal status", () => {
 		const job = store.createJob(
 			{

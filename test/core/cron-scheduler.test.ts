@@ -12,6 +12,7 @@ let dataDir: string;
 let store: CronJobStore;
 let provider: Provider;
 let sent: Array<{ chatId: string; text: string }>;
+let handoffs: Array<{ senderId: string; text: string; isGroup: boolean; chatId: string }>;
 let runnerCalls: Array<{ contextKey: string; text: string; agentConfig: AgentConfig }>;
 let appendedMessages: Array<{ contextKey: string; text: string; cwd?: string }>;
 let runner: Pick<Runner, "process" | "appendAssistantMessage">;
@@ -21,6 +22,7 @@ beforeEach(() => {
 	dataDir = mkdtempSync(join(tmpdir(), "pion-cron-scheduler-"));
 	store = new CronJobStore({ dataDir });
 	sent = [];
+	handoffs = [];
 	runnerCalls = [];
 	appendedMessages = [];
 	provider = {
@@ -96,6 +98,49 @@ describe("CronScheduler", () => {
 		expect(job?.lastStatus).toBe("sent reminder");
 		expect(job?.lastOutputPath).toBeString();
 		expect(readFileSync(job?.lastOutputPath || "", "utf-8")).toContain("Send the invoice.");
+	});
+
+	test("executes script jobs and hands stdout off to the target session context", async () => {
+		const created = store.createJob(
+			{
+				kind: "script",
+				name: "job digest",
+				schedule: "0 9 * * *",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				command: "printf 'hello from script'",
+				prompt: "Review this output",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			providers: { telegram: provider },
+			onScriptHandoff: async (message) => {
+				handoffs.push({
+					senderId: message.senderId,
+					text: message.text,
+					isGroup: message.isGroup,
+					chatId: message.chatId,
+				});
+			},
+		});
+
+		await scheduler.runNow(created.id, new Date("2026-04-03T08:05:00Z"));
+
+		expect(handoffs).toEqual([
+			{
+				senderId: "chat-1",
+				chatId: "chat-1",
+				isGroup: false,
+				text: `[Scheduled script "job digest" output — Review this output]\n\nhello from script`,
+			},
+		]);
+		expect(sent).toEqual([]);
+		expect(store.getJob(created.id)?.lastStatus).toBe("script handoff delivered");
+		const output = readFileSync(store.getJob(created.id)?.lastOutputPath || "", "utf-8");
+		expect(output).toContain("hello from script");
 	});
 
 	test("executes agent jobs using cron.agent defaults and only sends the final text block", async () => {

@@ -22,7 +22,9 @@ const cronjobSchema = Type.Object({
 	id: Type.Optional(
 		Type.String({ description: "Scheduled job id for update/pause/resume/remove/run_now." }),
 	),
-	kind: Type.Optional(Type.Union([Type.Literal("agent"), Type.Literal("reminder")])),
+	kind: Type.Optional(
+		Type.Union([Type.Literal("agent"), Type.Literal("reminder"), Type.Literal("script")]),
+	),
 	name: Type.Optional(Type.String()),
 	schedule: Type.Optional(
 		Type.String({
@@ -32,6 +34,12 @@ const cronjobSchema = Type.Object({
 	skills: Type.Optional(Type.Array(Type.String())),
 	prompt: Type.Optional(Type.String()),
 	message: Type.Optional(Type.String()),
+	command: Type.Optional(
+		Type.String({
+			description:
+				"Bash command to run for kind=script. Stdout is handed off into the target session.",
+		}),
+	),
 });
 
 type CronToolParams = Static<typeof cronjobSchema>;
@@ -51,12 +59,13 @@ export function createCronTools(options: CronToolsOptions): ToolDefinition[] {
 		name: "cronjob",
 		label: "Cron Jobs",
 		description:
-			"Manage daemon-owned scheduled jobs. v1 accepts 5-field cron expressions only (minute hour day-of-month month day-of-week). Use kind=reminder for fixed messages and kind=agent for a fresh self-contained background agent run that will deliver its final response directly to Telegram.",
+			"Manage daemon-owned scheduled jobs. v1 accepts 5-field cron expressions only (minute hour day-of-month month day-of-week). Use kind=reminder for fixed messages, kind=agent for a fresh self-contained background agent run, and kind=script to run a bash command whose stdout is handed into the target session.",
 		promptSnippet:
-			"cronjob(action, ...) - create/list/update/pause/resume/remove/run_now daemon-owned scheduled jobs using 5-field cron expressions",
+			"cronjob(action, ...) - create/list/update/pause/resume/remove/run_now daemon-owned scheduled jobs using 5-field cron expressions. kind=script runs a command and hands stdout into the target session",
 		promptGuidelines: [
 			"For kind=agent, write a self-contained future brief for another agent run. Do not rely on current chat context or say 'as above' or 'continue from earlier'.",
 			"Use kind=reminder instead of kind=agent when no reasoning or tool use is needed.",
+			"Use kind=script when you want a scheduled command whose stdout should be processed in the existing target session context.",
 			"Scheduled agent jobs use the daemon's cron.agent configuration, not chat-routing agent names.",
 		],
 		parameters: cronjobSchema,
@@ -123,6 +132,7 @@ function updateJob(options: CronToolsOptions, params: CronToolParams): string {
 			skills: params.skills,
 			prompt: params.prompt,
 			message: params.message,
+			command: params.command,
 		}) as UpdateCronJobInput,
 	);
 	if (!updated) throw new Error(`Job not found: ${id}`);
@@ -177,6 +187,24 @@ function buildCreateInput(
 			},
 			skills: params.skills ?? [],
 			prompt: params.prompt,
+		};
+	}
+	if (kind === "script") {
+		if (!params.command) {
+			throw new Error("command is required for kind=script");
+		}
+		return {
+			kind,
+			name: params.name ?? "",
+			schedule: params.schedule ?? "",
+			delivery: {
+				provider: options.provider,
+				chatId: options.chatId,
+				contextKey: options.contextKey,
+			},
+			command: params.command,
+			prompt: params.prompt,
+			skills: [],
 		};
 	}
 	if (!params.message) {

@@ -123,6 +123,7 @@ class Daemon {
 			runner: this.runner,
 			cronAgent: this.config.cron?.agent,
 			providers: {},
+			onScriptHandoff: async (msg) => this.handleMessage(msg),
 		});
 	}
 
@@ -181,6 +182,7 @@ class Daemon {
 				runner: this.runner,
 				cronAgent: this.config.cron?.agent,
 				providers: { telegram },
+				onScriptHandoff: async (msg) => this.handleMessage(msg),
 			});
 			this.detachTelegramStatusSink = new TelegramStatusSink(telegram, {
 				mode: this.config.telegram.status?.mode,

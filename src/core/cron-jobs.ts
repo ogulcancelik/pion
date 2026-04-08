@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { join } from "node:path";
 import { nextCronOccurrence, parseCronExpression } from "./cron-schedule.js";
 
-export type CronJobKind = "agent" | "reminder";
+export type CronJobKind = "agent" | "reminder" | "script";
 export type CronJobState = "scheduled" | "running" | "paused" | "completed" | "failed";
 
 export interface CronJobDelivery {
@@ -32,6 +32,7 @@ export interface CronJob {
 	skills: string[];
 	prompt?: string;
 	message?: string;
+	command?: string;
 	lastOutputPath?: string;
 }
 
@@ -44,6 +45,7 @@ export interface CreateCronJobInput {
 	skills?: string[];
 	prompt?: string;
 	message?: string;
+	command?: string;
 }
 
 export interface UpdateCronJobInput {
@@ -53,6 +55,7 @@ export interface UpdateCronJobInput {
 	skills?: string[];
 	prompt?: string;
 	message?: string;
+	command?: string;
 }
 
 interface PersistedCronJobs {
@@ -105,6 +108,7 @@ export class CronJobStore {
 			skills: input.skills ?? [],
 			prompt: input.prompt,
 			message: input.message,
+			command: input.command,
 		};
 
 		const jobs = this.readJobs();
@@ -137,6 +141,7 @@ export class CronJobStore {
 			skills: input.skills ?? existing.skills,
 			prompt: input.prompt ?? existing.prompt,
 			message: input.message ?? existing.message,
+			command: input.command ?? existing.command,
 			updatedAt: now.toISOString(),
 		};
 		jobs[index] = updated;
