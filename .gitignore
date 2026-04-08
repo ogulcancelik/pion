@@ -37,7 +37,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 pion.yaml
 config.yaml
 
-# pi agent sessions/goals
-.pi/*
-!.pi/issues/
-!.pi/issues/**
+# pi issues
+.pi/issues/
