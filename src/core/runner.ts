@@ -88,6 +88,12 @@ export interface RunnerProcessOptions {
 	isCancelled?: () => boolean;
 }
 
+export interface ContextUsageSnapshot {
+	tokens: number | null;
+	contextWindow: number;
+	percent: number | null;
+}
+
 /** Warning state per session */
 interface WarningState {
 	warned85: boolean;
@@ -387,7 +393,7 @@ export class Runner {
 	private checkContextWarnings(contextKey: string, session: RunnerSession): string[] {
 		const warnings: string[] = [];
 		const usage = session.getContextUsage();
-		if (!usage) return warnings;
+		if (!usage || usage.percent === null) return warnings;
 
 		const pct = Math.round(usage.percent);
 		let state = this.warningState.get(contextKey);
@@ -419,7 +425,7 @@ export class Runner {
 		return this.runtimeEventBus.getEventLogFile(contextKey);
 	}
 
-	async getContextUsage(context: RunnerContext): Promise<{ percent: number } | null> {
+	async getContextUsage(context: RunnerContext): Promise<ContextUsageSnapshot | null> {
 		const session = await this.ensureSession(context);
 		return session.getContextUsage();
 	}
@@ -735,10 +741,14 @@ class RunnerSession {
 	/**
 	 * Get context usage from the underlying agent session.
 	 */
-	getContextUsage(): { percent: number } | null {
+	getContextUsage(): ContextUsageSnapshot | null {
 		const usage = this.agentSession?.getContextUsage();
-		if (!usage || usage.percent === null) return null;
-		return { percent: usage.percent };
+		if (!usage) return null;
+		return {
+			tokens: usage.tokens,
+			contextWindow: usage.contextWindow,
+			percent: usage.percent,
+		};
 	}
 
 	/**

@@ -16,7 +16,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config/loader.js";
-import type { Config } from "./config/schema.js";
+import type { Config, IsolationMode } from "./config/schema.js";
 import { Commands } from "./core/commands.js";
 import { shouldAutoCompact } from "./core/compactor.js";
 import { CronJobStore } from "./core/cron-jobs.js";
@@ -40,6 +40,7 @@ import {
 import { RuntimeInspectorServer } from "./core/runtime-inspector-ipc.js";
 import { RuntimeInspectorStore } from "./core/runtime-inspector.js";
 import { DaemonRuntimeState, type StartupRecoveryInfo } from "./core/runtime-state.js";
+import { buildSettingsText } from "./core/settings.js";
 import { loadSkills } from "./core/skills.js";
 import { ensureWorkspace } from "./core/workspace.js";
 import { TelegramStatusSink } from "./providers/telegram-status.js";
@@ -250,6 +251,7 @@ class Daemon {
 			cmd,
 			{
 				contextKey: route.contextKey,
+				isolation: route.isolation,
 				chatId: action.chatId,
 				provider,
 				agentName: route.agentName,
@@ -300,6 +302,7 @@ class Daemon {
 				cmd,
 				{
 					contextKey: route.contextKey,
+					isolation: route.isolation,
 					chatId: message.chatId,
 					provider,
 					agentName: route.agentName,
@@ -717,6 +720,7 @@ class Daemon {
 		cmd: { command: string; args: string },
 		context: {
 			contextKey: string;
+			isolation: IsolationMode;
 			chatId: string;
 			provider: Provider;
 			agentName: string | null;
@@ -724,7 +728,7 @@ class Daemon {
 		},
 		cancelledCount = 0,
 	): Promise<void> {
-		const { contextKey, chatId, provider, agentName, agent } = context;
+		const { contextKey, isolation, chatId, provider, agentName, agent } = context;
 		try {
 			switch (cmd.command) {
 				case "new": {
@@ -855,14 +859,20 @@ class Daemon {
 						: hasSession
 							? "💬 session active"
 							: "🆕 no session yet";
-					const settingsText = [
-						"**Runner controls**",
-						"",
-						`status: ${status}`,
-						`agent: \`${agentName ?? "none"}\``,
-						`model: \`${agent?.model ?? "n/a"}\``,
-						`context: \`${contextKey}\``,
-					].join("\n");
+					const contextUsage = agent
+						? await this.runner.getContextUsage({
+								contextKey,
+								agentConfig: this.buildForegroundAgentConfig(agent),
+							})
+						: null;
+					const settingsText = buildSettingsText({
+						status,
+						agentName,
+						model: agent?.model,
+						isolation,
+						contextKey,
+						contextUsage,
+					});
 
 					if (provider.type === "telegram" && this.telegramProvider) {
 						await this.telegramProvider.sendControlMenu({
