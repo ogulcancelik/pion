@@ -649,6 +649,20 @@ export class Runner {
 			message: {
 				role: "assistant",
 				content: [{ type: "text", text }],
+				api: "pion-synthetic",
+				provider: "pion",
+				model: "scheduled-delivery",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				// Mark synthetic deliveries as non-usage-bearing so downstream context accounting
+				// skips them and falls back to the last real model response.
+				stopReason: "aborted",
 				timestamp: Date.now(),
 			},
 		};

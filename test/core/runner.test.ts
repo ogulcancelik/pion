@@ -345,6 +345,70 @@ describe("Runner", () => {
 		});
 	});
 
+	describe("appendAssistantMessage", () => {
+		test("writes a synthetic assistant message with safe usage metadata", () => {
+			const contextKey = "telegram:contact:scheduled";
+			const sessionFile = runner.getSessionFile(contextKey);
+			writeFileSync(
+				sessionFile,
+				`${[
+					JSON.stringify({
+						type: "session",
+						version: 3,
+						id: "session-1",
+						timestamp: "2026-04-09T06:00:00.000Z",
+						cwd: testDir,
+					}),
+					JSON.stringify({
+						type: "message",
+						id: "assistant-1",
+						parentId: null,
+						timestamp: "2026-04-09T06:00:01.000Z",
+						message: {
+							role: "assistant",
+							content: [{ type: "text", text: "prior response" }],
+							api: "anthropic-messages",
+							provider: "anthropic",
+							model: "claude-opus-4-6",
+							usage: {
+								input: 10,
+								output: 20,
+								cacheRead: 0,
+								cacheWrite: 0,
+								totalTokens: 30,
+								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+							},
+							stopReason: "stop",
+							timestamp: 1775714401000,
+						},
+					}),
+				].join("\n")}
+`,
+			);
+
+			runner.appendAssistantMessage(contextKey, "[Scheduled job result delivered]\n\nreminder");
+
+			const lines = readFileSync(sessionFile, "utf-8").trim().split("\n");
+			const appended = JSON.parse(lines.at(-1) || "{}");
+
+			expect(appended.type).toBe("message");
+			expect(appended.id).toMatch(/^scheduled-/);
+			expect(appended.message.role).toBe("assistant");
+			expect(appended.message.stopReason).toBe("aborted");
+			expect(appended.message.api).toBe("pion-synthetic");
+			expect(appended.message.provider).toBe("pion");
+			expect(appended.message.model).toBe("scheduled-delivery");
+			expect(appended.message.usage).toEqual({
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			});
+		});
+	});
+
 	describe("getActiveContextKeys", () => {
 		test("returns empty array when no sessions exist", () => {
 			expect(runner.getActiveContextKeys()).toEqual([]);
