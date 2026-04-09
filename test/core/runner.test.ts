@@ -320,6 +320,31 @@ describe("Runner", () => {
 			expect(thirdLine.message.role).toBe("assistant");
 		});
 
+		test("writes a synthetic handoff ack with safe usage metadata", () => {
+			const contextKey = "telegram:contact:compacted";
+			runner.primeSessionWithSummary(contextKey, "Compacted summary text");
+
+			const sessionFile = runner.getSessionFile(contextKey);
+			const lines = readFileSync(sessionFile, "utf-8").trim().split("\n");
+			const ack = JSON.parse(lines[2] || "{}");
+
+			expect(ack.type).toBe("message");
+			expect(ack.id).toMatch(/^summary-ack-/);
+			expect(ack.message.role).toBe("assistant");
+			expect(ack.message.stopReason).toBe("aborted");
+			expect(ack.message.api).toBe("pion-synthetic");
+			expect(ack.message.provider).toBe("pion");
+			expect(ack.message.model).toBe("compaction-handoff");
+			expect(ack.message.usage).toEqual({
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			});
+		});
+
 		test("archives existing session before priming", () => {
 			const contextKey = "test:prime:archive";
 			const sessionFile = runner.getSessionFile(contextKey);
