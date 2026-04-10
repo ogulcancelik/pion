@@ -567,12 +567,13 @@ describe("Runner", () => {
 							"test-provider": {
 								baseUrl: "http://127.0.0.1:1/v1",
 								apiKey: "TEST_PROVIDER_API_KEY",
-								api: "openai-completions",
+								api: "openai-responses",
 								models: [
 									{
 										id: "demo-model",
 										name: "Demo Model",
 										input: ["text"],
+										reasoning: true,
 										cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 										contextWindow: 4096,
 										maxTokens: 256,
@@ -619,9 +620,11 @@ description: Watch runtime state
 			type TestRunnerSession = {
 				initialize(): Promise<void>;
 				agentSession: {
+					thinkingLevel: string;
 					agent: {
 						state: {
 							systemPrompt: string;
+							thinkingLevel: string;
 						};
 					};
 					resourceLoader: {
@@ -640,6 +643,7 @@ description: Watch runtime state
 							model: string;
 							workspace: string;
 							cwd?: string;
+							thinkingLevel?: string;
 							skills: string[];
 						};
 					}): Promise<TestRunnerSession>;
@@ -651,6 +655,7 @@ description: Watch runtime state
 				agentConfig: {
 					model: "test-provider/demo-model",
 					workspace: workspaceDir,
+					thinkingLevel: "medium",
 					skills: ["supervise"],
 				},
 			});
@@ -660,6 +665,8 @@ description: Watch runtime state
 			expect(defaultCwdSession.agentSession.agent.state.systemPrompt).toContain(
 				`Current working directory: ${workspaceDir}`,
 			);
+			expect(defaultCwdSession.agentSession.thinkingLevel).toBe("medium");
+			expect(defaultCwdSession.agentSession.agent.state.thinkingLevel).toBe("medium");
 			expect(
 				defaultCwdSession.agentSession.resourceLoader.getSkills().skills.map((skill) => skill.name),
 			).toContain("supervise");
@@ -678,6 +685,9 @@ description: Watch runtime state
 			expect(overrideCwdSession.agentSession.agent.state.systemPrompt).toContain("workspace soul");
 			expect(overrideCwdSession.agentSession.agent.state.systemPrompt).toContain(
 				`Current working directory: ${explicitCwd}`,
+			);
+			expect(overrideCwdSession.agentSession.agent.state.thinkingLevel).toBe(
+				overrideCwdSession.agentSession.thinkingLevel,
 			);
 		});
 	});

@@ -50,11 +50,13 @@ Config is loaded from:
 See [`pion.example.yaml`](pion.example.yaml) for a working example.
 
 Key concepts:
-- **agents** — choose a model, prompt workspace, optional execution `cwd`, inline prompt text, and enabled skills
+- **agents** — choose a model, optional `thinkingLevel`, prompt workspace, optional execution `cwd`, inline prompt text, and enabled skills
 - **routes** — first match wins; send a chat to an agent or ignore it with `agent: null`
 - **workspace vs cwd** — `workspace` provides prompt files; `cwd` is where tools/commands execute
 - **recallQueryModel** — optional cheaper/faster model for `session_query`
 - **debounceMs** — batch rapid message fragments before a run starts
+
+`thinkingLevel` accepts `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`.
 
 ## Commands
 

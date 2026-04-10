@@ -167,6 +167,40 @@ describe("validateConfig", () => {
 		expect(errors).toHaveLength(0);
 	});
 
+	test("accepts supported agent thinking levels", () => {
+		for (const thinkingLevel of ["off", "minimal", "low", "medium", "high", "xhigh"]) {
+			const errors = validateConfig({
+				agents: {
+					main: {
+						model: "x",
+						systemPrompt: "y",
+						workspace: "/tmp/pion/agents/main",
+						thinkingLevel,
+					},
+				},
+				routes: [],
+			});
+			expect(errors).toHaveLength(0);
+		}
+	});
+
+	test("rejects invalid agent thinking levels", () => {
+		const errors = validateConfig({
+			agents: {
+				main: {
+					model: "x",
+					systemPrompt: "y",
+					workspace: "/tmp/pion/agents/main",
+					thinkingLevel: "adaptive",
+				},
+			},
+			routes: [],
+		});
+		expect(errors).toContain(
+			"agents.main.thinkingLevel must be one of: off, minimal, low, medium, high, xhigh",
+		);
+	});
+
 	test("rejects non-string agent cwd override", () => {
 		const errors = validateConfig({
 			agents: {
@@ -272,6 +306,7 @@ describe("validateConfig", () => {
 					model: "anthropic/claude-haiku-4-5",
 					workspace: "/tmp/pion/agents/cron",
 					skills: ["web-browse"],
+					thinkingLevel: "medium",
 				},
 			},
 			agents: { main: { model: "x", systemPrompt: "y" } },
@@ -303,5 +338,22 @@ describe("validateConfig", () => {
 			routes: [],
 		});
 		expect(errors).toContain("cron.agent.model must be a string");
+	});
+
+	test("rejects invalid cron agent thinking level", () => {
+		const errors = validateConfig({
+			cron: {
+				agent: {
+					model: "anthropic/claude-haiku-4-5",
+					workspace: "/tmp/pion/agents/cron",
+					thinkingLevel: "adaptive",
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain(
+			"cron.agent.thinkingLevel must be one of: off, minimal, low, medium, high, xhigh",
+		);
 	});
 });

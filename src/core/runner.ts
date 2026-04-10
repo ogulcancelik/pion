@@ -980,6 +980,7 @@ class RunnerSession {
 
 		const result = await createAgentSession({
 			model,
+			thinkingLevel: this.config.agentConfig.thinkingLevel,
 			cwd: resolvedCwd,
 			sessionManager,
 			modelRegistry: this.config.modelRegistry,

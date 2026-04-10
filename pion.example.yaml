@@ -52,6 +52,9 @@ cron:
   # This is separate from chat-routing agents.
   agent:
     model: anthropic/claude-haiku-4-5
+    # Optional model thinking level.
+    # Supported: off, minimal, low, medium, high, xhigh
+    # thinkingLevel: medium
     workspace: "~/.pion/agents/main"
     # Optional execution cwd. Defaults to workspace when omitted.
     # cwd: "~/Projects/some-repo"
@@ -61,6 +64,9 @@ cron:
 agents:
   main:
     model: anthropic/claude-sonnet-4-20250514
+    # Optional model thinking level.
+    # Supported: off, minimal, low, medium, high, xhigh
+    # thinkingLevel: medium
     workspace: "~/.pion/agents/main"
     # Optional execution cwd. Defaults to workspace when omitted.
     # cwd: "~/Projects/some-repo"

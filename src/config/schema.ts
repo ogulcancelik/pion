@@ -40,6 +40,13 @@ export interface CronConfig {
 }
 
 export type TelegramStatusMode = "clear" | "keep" | "off";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+
+function isThinkingLevel(value: unknown): value is ThinkingLevel {
+	return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel);
+}
 
 export interface TelegramConfig {
 	botToken: string;
@@ -60,6 +67,8 @@ export interface AgentConfig {
 	workspace: string;
 	/** Optional execution cwd override. Defaults to workspace when unset. */
 	cwd?: string;
+	/** Optional model thinking level. */
+	thinkingLevel?: ThinkingLevel;
 	/** Optional inline system prompt (used if no workspace or as addition) */
 	systemPrompt?: string;
 	skills?: string[];
@@ -188,6 +197,9 @@ export function validateConfig(config: unknown): string[] {
 					if (agent.cwd !== undefined && typeof agent.cwd !== "string") {
 						errors.push("cron.agent.cwd must be a string");
 					}
+					if (agent.thinkingLevel !== undefined && !isThinkingLevel(agent.thinkingLevel)) {
+						errors.push(`cron.agent.thinkingLevel must be one of: ${THINKING_LEVELS.join(", ")}`);
+					}
 				}
 			}
 		}
@@ -201,6 +213,11 @@ export function validateConfig(config: unknown): string[] {
 			const agent = agentValue as Record<string, unknown>;
 			if (agent.cwd !== undefined && typeof agent.cwd !== "string") {
 				errors.push(`agents.${agentName}.cwd must be a string`);
+			}
+			if (agent.thinkingLevel !== undefined && !isThinkingLevel(agent.thinkingLevel)) {
+				errors.push(
+					`agents.${agentName}.thinkingLevel must be one of: ${THINKING_LEVELS.join(", ")}`,
+				);
 			}
 		}
 	}

@@ -42,6 +42,7 @@ beforeEach(() => {
 	cronAgent = {
 		model: "anthropic/test-model",
 		workspace,
+		thinkingLevel: "medium",
 		skills: ["supervise"],
 	};
 	runner = {
@@ -168,6 +169,7 @@ describe("CronScheduler", () => {
 		expect(runnerCalls[0]?.contextKey).toContain(`cron:${created.id}:2026-04-03T08-05-00-000Z`);
 		expect(runnerCalls[0]?.text).toContain("Search for new energy-sector news");
 		expect(runnerCalls[0]?.agentConfig.model).toBe("anthropic/test-model");
+		expect(runnerCalls[0]?.agentConfig.thinkingLevel).toBe("medium");
 		expect(runnerCalls[0]?.agentConfig.skills).toEqual(["web-browse"]);
 		expect(runnerCalls[0]?.agentConfig.systemPrompt).toContain(
 			"You are running as a scheduled background job.",

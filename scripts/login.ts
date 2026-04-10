@@ -12,6 +12,7 @@ import {
 	setApiKeyCredential,
 	type SupportedAuthProvider,
 } from "../src/core/auth.js";
+import { chooseLoginProvider } from "../src/core/auth-cli.js";
 import { openUrlInBrowser } from "../src/core/browser.js";
 import { expandTilde } from "../src/core/paths.js";
 
@@ -75,7 +76,7 @@ Commands:
 Notes:
   - pion defaults to ~/.pion/auth.json
   - pion auth.json is schema-compatible with pi auth.json
-  - provider defaults to anthropic when omitted
+  - provider is prompted when omitted
   - API-key providers can use --api-key or the matching env var
 
 Examples:
@@ -162,6 +163,18 @@ function printProviderList(authPath: string): void {
 	}
 }
 
+async function promptForProviderSelection(providers: SupportedAuthProvider[]): Promise<string> {
+	const rl = createInterface({ input: process.stdin, output: process.stdout });
+	try {
+		return await chooseLoginProvider({
+			providers,
+			prompt: (question) => prompt(rl, question),
+		});
+	} finally {
+		rl.close();
+	}
+}
+
 async function main(): Promise<void> {
 	const options = parseArgs(process.argv.slice(2));
 	const authPath = resolveAuthPath(options.authPath);
@@ -171,10 +184,12 @@ async function main(): Promise<void> {
 		return;
 	}
 
-	const provider = getSupportedAuthProvider(options.provider ?? "anthropic");
+	const supportedProviders = getSupportedAuthProviders();
+	const providerId = options.provider ?? (await promptForProviderSelection(supportedProviders));
+	const provider = getSupportedAuthProvider(providerId);
 	if (!provider) {
 		throw new Error(
-			`Unsupported provider: ${options.provider}. Run 'bun run login list' to see supported providers.`,
+			`Unsupported provider: ${providerId}. Run 'bun run login list' to see supported providers.`,
 		);
 	}
 
@@ -196,7 +211,9 @@ async function main(): Promise<void> {
 	console.log("Format is compatible with pi auth.json, but pion keeps its own auth file by default.");
 }
 
-main().catch((error) => {
-	console.error("Error:", error instanceof Error ? error.message : String(error));
-	process.exit(1);
-});
+if (import.meta.main) {
+	main().catch((error) => {
+		console.error("Error:", error instanceof Error ? error.message : String(error));
+		process.exit(1);
+	});
+}
