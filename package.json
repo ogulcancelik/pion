@@ -18,10 +18,10 @@
     "monitor": "bun run src/tui/monitor.ts"
   },
   "dependencies": {
-    "@mariozechner/pi-agent-core": "0.64.0",
-    "@mariozechner/pi-ai": "0.64.0",
-    "@mariozechner/pi-coding-agent": "0.64.0",
-    "@mariozechner/pi-tui": "0.64.0",
+    "@mariozechner/pi-agent-core": "0.67.68",
+    "@mariozechner/pi-ai": "0.67.68",
+    "@mariozechner/pi-coding-agent": "0.67.68",
+    "@mariozechner/pi-tui": "0.67.68",
     "grammy": "^1.39.2",
     "markdown-it": "^14.1.0",
     "yaml": "^2.7.0"

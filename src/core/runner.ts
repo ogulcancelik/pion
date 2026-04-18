@@ -900,18 +900,16 @@ class RunnerSession {
 				if (disposition.dropImages) {
 					this.rewindFailedTurnForRetry();
 				}
-				this.agentSession.agent.setSystemPrompt(
-					buildRuntimeErrorSystemPrompt(
-						freshSystemPrompt,
-						errorMessage,
-						disposition.additionalGuidance,
-					),
+				this.agentSession.agent.state.systemPrompt = buildRuntimeErrorSystemPrompt(
+					freshSystemPrompt,
+					errorMessage,
+					disposition.additionalGuidance,
 				);
 				await this.agentSession.prompt(
 					messagePrefix + text,
 					disposition.dropImages ? undefined : images ? { images } : undefined,
 				);
-				this.agentSession.agent.setSystemPrompt(freshSystemPrompt);
+				this.agentSession.agent.state.systemPrompt = freshSystemPrompt;
 			}
 
 			return textBlocks.join("\n\n");
