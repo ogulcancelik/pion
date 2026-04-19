@@ -52,6 +52,19 @@ function dispatchTestAction(provider: TelegramProvider, callbackQuery: TestCallb
 	).dispatchAction(callbackQuery);
 }
 
+async function dispatchTelegramUpdate(provider: TelegramProvider, update: unknown): Promise<void> {
+	const bot = (
+		provider as unknown as {
+			bot: {
+				botInfo: { id: number; is_bot: true; first_name: string; username: string };
+				handleUpdate(update: unknown): Promise<void>;
+			};
+		}
+	).bot;
+	bot.botInfo = { id: 1, is_bot: true, first_name: "Pion", username: "piontestbot" };
+	await bot.handleUpdate(update);
+}
+
 describe("TelegramProvider", () => {
 	function createProvider() {
 		const provider = new TelegramProvider({ botToken: "test-token" });
@@ -296,6 +309,70 @@ describe("TelegramProvider", () => {
 				provider: "telegram",
 				timestamp: new Date(1712091600 * 1000),
 				raw: {},
+			},
+		]);
+	});
+
+	test("normalizes stickers to semantic text without exposing file ids", async () => {
+		const provider = new TelegramProvider({ botToken: "test-token" });
+		const bot = (
+			provider as unknown as {
+				bot: {
+					api: {
+						getStickerSet(setName: string): Promise<{
+							name: string;
+							title: string;
+							sticker_type: "regular" | "mask" | "custom_emoji";
+							stickers: unknown[];
+						}>;
+					};
+				};
+			}
+		).bot;
+		bot.api.getStickerSet = async (setName: string) => ({
+			name: setName,
+			title: "Peepo pepe @peepopepe",
+			sticker_type: "regular",
+			stickers: [],
+		});
+
+		const messages: Message[] = [];
+		provider.onMessage((message) => {
+			messages.push(message);
+		});
+
+		await dispatchTelegramUpdate(provider, {
+			update_id: 1,
+			message: {
+				message_id: 99,
+				date: 1712091600,
+				chat: { id: 123, type: "private" },
+				from: { id: 7, first_name: "Can", username: "can" },
+				sticker: {
+					file_id: "sticker-file-id",
+					file_unique_id: "sticker-unique-id",
+					type: "regular",
+					width: 512,
+					height: 512,
+					is_animated: false,
+					is_video: false,
+					emoji: "😌",
+					set_name: "Peepo_Pepe",
+				},
+			},
+		});
+
+		expect(messages).toEqual([
+			{
+				id: "99",
+				chatId: "123",
+				senderId: "7",
+				senderName: "Can",
+				text: "Sticker sent. Emoji equivalent: 😌. Pack: Peepo pepe @peepopepe (Peepo_Pepe).",
+				isGroup: false,
+				provider: "telegram",
+				timestamp: new Date(1712091600 * 1000),
+				raw: expect.objectContaining({ message_id: 99 }),
 			},
 		]);
 	});

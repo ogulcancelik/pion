@@ -23,6 +23,7 @@ import { CronJobStore } from "./core/cron-jobs.js";
 import { CronScheduler } from "./core/cron-scheduler.js";
 import { buildCronPromptBlock, createCronTools } from "./core/cron-tools.js";
 import { MessageDebouncer, mergeMessages } from "./core/debouncer.js";
+import { getOutputDeliveryTarget } from "./core/output-routing.js";
 import { expandTilde, homeDir } from "./core/paths.js";
 import {
 	buildAffectedChatRecoveryMessage,
@@ -556,12 +557,12 @@ class Daemon {
 						console.log(
 							`   📤 Message ${msgNum}: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`,
 						);
-						const replyTo = msgNum === 1 ? message.id : undefined;
+						const deliveryTarget = getOutputDeliveryTarget("stream", message.id);
 						const sendPromise = provider
 							.send({
 								chatId: message.chatId,
 								text,
-								replyTo,
+								replyTo: deliveryTarget.replyTo,
 							})
 							.then(() => {
 								this.emitRuntimeEvent({
@@ -570,7 +571,7 @@ class Daemon {
 									type: "runtime_output_sent",
 									provider: message.provider,
 									chatId: message.chatId,
-									replyTo,
+									replyTo: deliveryTarget.replyTo,
 									text,
 								});
 							})
@@ -609,9 +610,11 @@ class Daemon {
 					type: "runtime_warning_emitted",
 					warning,
 				});
+				const deliveryTarget = getOutputDeliveryTarget("warning", message.id);
 				await provider.send({
 					chatId: message.chatId,
 					text: warning,
+					replyTo: deliveryTarget.replyTo,
 				});
 			}
 
@@ -619,10 +622,11 @@ class Daemon {
 				console.log(`   ✓ Sent ${messagesSent} message(s)`);
 			} else if (result.response) {
 				// Fallback: if no messages were sent via callback, send full response
+				const deliveryTarget = getOutputDeliveryTarget("fallback", message.id);
 				await provider.send({
 					chatId: message.chatId,
 					text: result.response,
-					replyTo: message.id,
+					replyTo: deliveryTarget.replyTo,
 				});
 				this.emitRuntimeEvent({
 					source: "pion",
@@ -630,7 +634,7 @@ class Daemon {
 					type: "runtime_output_sent",
 					provider: message.provider,
 					chatId: message.chatId,
-					replyTo: message.id,
+					replyTo: deliveryTarget.replyTo,
 					text: result.response,
 				});
 				messagesSent = 1;
@@ -664,10 +668,11 @@ class Daemon {
 			const errorText = getUserFacingErrorMessage(error);
 
 			// Send error message back
+			const deliveryTarget = getOutputDeliveryTarget("error", message.id);
 			await provider.send({
 				chatId: message.chatId,
 				text: errorText,
-				replyTo: message.id,
+				replyTo: deliveryTarget.replyTo,
 			});
 			this.emitRuntimeEvent({
 				source: "pion",
@@ -675,7 +680,7 @@ class Daemon {
 				type: "runtime_output_sent",
 				provider: message.provider,
 				chatId: message.chatId,
-				replyTo: message.id,
+				replyTo: deliveryTarget.replyTo,
 				text: errorText,
 			});
 			this.emitRuntimeEvent({

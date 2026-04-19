@@ -43,6 +43,7 @@ export class TelegramProvider implements Provider {
 	private messageHandler?: (message: Message) => void | Promise<void>;
 	private actionHandler?: (action: ActionMessage) => void | Promise<void>;
 	private connected = false;
+	private stickerSetTitleCache = new Map<string, string>();
 
 	constructor(private config: TelegramProviderConfig) {
 		this.bot = new Bot(config.botToken);
@@ -84,6 +85,24 @@ export class TelegramProvider implements Provider {
 		Promise.resolve(this.actionHandler(action)).catch((err: unknown) => {
 			console.error("[telegram] action handler error:", err);
 		});
+	}
+
+	private async getStickerPackLabel(setName?: string): Promise<string | undefined> {
+		if (!setName) return undefined;
+
+		const cached = this.stickerSetTitleCache.get(setName);
+		if (cached) return cached;
+
+		try {
+			const stickerSet = await this.bot.api.getStickerSet(setName);
+			const label = stickerSet.title?.trim() ? `${stickerSet.title} (${setName})` : setName;
+			this.stickerSetTitleCache.set(setName, label);
+			return label;
+		} catch (error) {
+			console.warn("[telegram] Failed to resolve sticker pack title:", error);
+			this.stickerSetTitleCache.set(setName, setName);
+			return setName;
+		}
 	}
 
 	private setupHandlers(): void {
@@ -189,12 +208,22 @@ export class TelegramProvider implements Provider {
 			const msg = ctx.message;
 			const chat = ctx.chat;
 			const sticker = msg.sticker;
+			const packLabel = await this.getStickerPackLabel(sticker.set_name);
+			const emojiHint = sticker.emoji?.trim();
+			const stickerText =
+				emojiHint && packLabel
+					? `Sticker sent. Emoji equivalent: ${emojiHint}. Pack: ${packLabel}.`
+					: emojiHint
+						? `Sticker sent. Emoji equivalent: ${emojiHint}.`
+						: packLabel
+							? `Sticker sent. Pack: ${packLabel}.`
+							: "Sticker sent.";
 
-			// Log sticker info for debugging/learning file_ids
 			console.log("[telegram] Sticker received:", {
 				file_id: sticker.file_id,
 				emoji: sticker.emoji,
 				set_name: sticker.set_name,
+				pack: packLabel,
 			});
 
 			const message: Message = {
@@ -202,7 +231,7 @@ export class TelegramProvider implements Provider {
 				chatId: String(chat.id),
 				senderId: String(msg.from?.id ?? "unknown"),
 				senderName: msg.from?.first_name ?? msg.from?.username,
-				text: `[Sticker: ${sticker.emoji || "?"}] file_id: ${sticker.file_id}`,
+				text: stickerText,
 				isGroup: chat.type === "group" || chat.type === "supergroup",
 				provider: "telegram",
 				timestamp: new Date(msg.date * 1000),
