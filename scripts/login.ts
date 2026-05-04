@@ -2,6 +2,7 @@
 
 import { createInterface } from "node:readline";
 import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import type { OAuthLoginCallbacks } from "@mariozechner/pi-ai";
 import { loadConfig } from "../src/config/loader.js";
 import {
 	getAuthPath,
@@ -23,7 +24,9 @@ type CliOptions = {
 	provider?: string;
 };
 
-function prompt(rl: ReturnType<typeof createInterface>, question: string): Promise<string> {
+type PromptReader = Pick<ReturnType<typeof createInterface>, "question">;
+
+function prompt(rl: PromptReader, question: string): Promise<string> {
 	return new Promise((resolve) => rl.question(question, resolve));
 }
 
@@ -102,25 +105,39 @@ function resolveAuthPath(cliAuthPath?: string): string {
 	}
 }
 
+export function createOAuthLoginCallbacks(
+	provider: SupportedAuthProvider,
+	rl: PromptReader,
+): OAuthLoginCallbacks {
+	const callbacks: OAuthLoginCallbacks = {
+		onAuth: (info) => {
+			console.log(`\nOpen this URL in your browser:\n${info.url}`);
+			const opened = openUrlInBrowser(info.url);
+			console.log(opened ? "Attempted to open browser automatically." : "Could not auto-open browser; open the URL manually.");
+			if (info.instructions) console.log(info.instructions);
+			console.log();
+		},
+		onPrompt: async (p) => {
+			const suffix = p.placeholder ? ` (${p.placeholder})` : "";
+			return prompt(rl, `${p.message}${suffix}: `);
+		},
+		onProgress: (message) => console.log(message),
+	};
+
+	if (provider.id === "openai-codex") {
+		callbacks.onManualCodeInput = () =>
+			prompt(rl, "After browser login, paste the full localhost redirect URL or authorization code here: ");
+	}
+
+	return callbacks;
+}
+
 async function loginWithOAuth(provider: SupportedAuthProvider, authPath: string): Promise<void> {
 	const authStorage = AuthStorage.create(authPath);
 	const rl = createInterface({ input: process.stdin, output: process.stdout });
 
 	try {
-		await authStorage.login(provider.id, {
-			onAuth: (info) => {
-				console.log(`\nOpen this URL in your browser:\n${info.url}`);
-				const opened = openUrlInBrowser(info.url);
-				console.log(opened ? "Attempted to open browser automatically." : "Could not auto-open browser; open the URL manually.");
-				if (info.instructions) console.log(info.instructions);
-				console.log();
-			},
-			onPrompt: async (p) => {
-				const suffix = p.placeholder ? ` (${p.placeholder})` : "";
-				return prompt(rl, `${p.message}${suffix}: `);
-			},
-			onProgress: (message) => console.log(message),
-		});
+		await authStorage.login(provider.id, createOAuthLoginCallbacks(provider, rl));
 	} finally {
 		rl.close();
 	}

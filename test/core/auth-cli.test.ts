@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createOAuthLoginCallbacks } from "../../scripts/login.js";
 import {
 	buildProviderSelectionPrompt,
 	chooseLoginProvider,
@@ -72,5 +73,33 @@ describe("auth CLI provider selection", () => {
 
 		expect(result).toBe("openai-codex");
 		expect(prompts).toHaveLength(2);
+	});
+});
+
+describe("OAuth login callbacks", () => {
+	test("prompts immediately for OpenAI Codex manual redirect input", async () => {
+		const provider = providers.find((candidate) => candidate.id === "openai-codex");
+		if (!provider) throw new Error("missing openai-codex test provider");
+		let question = "";
+		const callbacks = createOAuthLoginCallbacks(provider, {
+			question(prompt: string, resolve: (answer: string) => void) {
+				question = prompt;
+				resolve("http://localhost:1455/auth/callback?code=abc&state=123");
+			},
+		} as Parameters<typeof createOAuthLoginCallbacks>[1]);
+
+		expect(callbacks.onManualCodeInput).toBeDefined();
+		await expect(callbacks.onManualCodeInput?.()).resolves.toContain("code=abc");
+		expect(question).toContain("paste the full localhost redirect URL");
+	});
+
+	test("does not add immediate manual redirect prompt for non-Codex OAuth providers", () => {
+		const provider = providers.find((candidate) => candidate.id === "anthropic");
+		if (!provider) throw new Error("missing anthropic test provider");
+		const callbacks = createOAuthLoginCallbacks(provider, {
+			question() {},
+		} as Parameters<typeof createOAuthLoginCallbacks>[1]);
+
+		expect(callbacks.onManualCodeInput).toBeUndefined();
 	});
 });
