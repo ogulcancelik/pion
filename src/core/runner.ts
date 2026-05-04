@@ -10,9 +10,6 @@ import {
 	SessionManager,
 	createAgentSession,
 	createBashToolDefinition,
-	createEditTool,
-	createReadTool,
-	createWriteTool,
 } from "@mariozechner/pi-coding-agent";
 import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
@@ -983,12 +980,9 @@ class RunnerSession {
 			sessionManager,
 			modelRegistry: this.config.modelRegistry,
 			resourceLoader: new PionResourceLoader(this.config.agentConfig, this.config.skillsDir),
-			tools: [
-				createReadTool(resolvedCwd),
-				createEditTool(resolvedCwd),
-				createWriteTool(resolvedCwd),
-			],
-			// Custom tools (e.g., Telegram sticker tool) + native recall tools + managed bash
+			// Custom tools (e.g., Telegram sticker tool) + native recall tools + managed bash.
+			// The pi SDK creates read/edit/write from cwd. Registering bash here overrides
+			// the built-in bash tool so Pion can inject toolEnvFile variables and timeout.
 			customTools: [
 				managedBashTool as unknown as ToolDefinition,
 				...(this.config.customTools ?? []),
