@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import type { Config } from "../config/schema.js";
 import { expandTilde, homeDir } from "./paths.js";
 

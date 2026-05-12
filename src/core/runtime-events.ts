@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { Message, ProviderType } from "../providers/types.js";
 import type {
 	IndexedAttachment,

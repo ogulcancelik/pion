@@ -10,9 +10,9 @@ import {
 	SessionManager,
 	createAgentSession,
 	createBashToolDefinition,
-} from "@mariozechner/pi-coding-agent";
-import type { AgentSessionEvent } from "@mariozechner/pi-coding-agent";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
+import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { getAuthPath } from "./auth.js";

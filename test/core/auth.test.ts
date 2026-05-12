@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
 import {
 	getAuthPath,
 	getConfiguredAuthProviderSummaries,

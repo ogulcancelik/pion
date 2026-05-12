@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 
 import { createInterface } from "node:readline";
-import { AuthStorage } from "@mariozechner/pi-coding-agent";
-import type { OAuthLoginCallbacks } from "@mariozechner/pi-ai";
+import { AuthStorage } from "@earendil-works/pi-coding-agent";
+import type { OAuthLoginCallbacks } from "@earendil-works/pi-ai";
 import { loadConfig } from "../src/config/loader.js";
 import {
 	getAuthPath,

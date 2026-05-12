@@ -15,7 +15,7 @@ import type {
 	AgentToolUpdateCallback,
 	ExtensionContext,
 	ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 
 // Schema for sendSticker tool
 const sendStickerSchema = Type.Object({

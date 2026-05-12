@@ -1,11 +1,11 @@
 import { existsSync } from "node:fs";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { type Api, type Model, completeSimple } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { type Api, type Model, completeSimple } from "@earendil-works/pi-ai";
 import {
 	type ExtensionCommandContext,
 	SessionManager,
 	type ToolDefinition,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 import type { IndexedSessionMessage } from "./sqlite-index.js";
 

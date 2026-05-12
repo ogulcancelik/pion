@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
 	createSendFileTool,
 	createSendStickerTool,

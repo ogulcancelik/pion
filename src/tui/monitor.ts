@@ -13,7 +13,7 @@
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import {
 	AssistantMessageComponent,
 	type Theme,
@@ -21,7 +21,7 @@ import {
 	UserMessageComponent,
 	getMarkdownTheme,
 	initTheme,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
 	type Component,
 	Container,
@@ -34,7 +34,7 @@ import {
 	matchesKey,
 	truncateToWidth,
 	visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import { loadConfig } from "../config/loader.js";
 import {
 	type MonitorTarget,
@@ -102,7 +102,7 @@ interface SessionStats {
 
 initTheme();
 const markdownTheme = getMarkdownTheme();
-const THEME_KEY = Symbol.for("@mariozechner/pi-coding-agent:theme");
+const THEME_KEY = Symbol.for("@earendil-works/pi-coding-agent:theme");
 
 function requireTheme(): Theme {
 	const theme = (globalThis as Record<symbol, Theme | undefined>)[THEME_KEY];

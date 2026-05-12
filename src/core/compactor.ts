@@ -3,8 +3,8 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { completeSimple } from "@mariozechner/pi-ai";
-import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
+import { completeSimple } from "@earendil-works/pi-ai";
+import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import { getAuthPath } from "./auth.js";
 
 // Hardcoded summarizer model

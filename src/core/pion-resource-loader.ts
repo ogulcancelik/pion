@@ -1,9 +1,9 @@
-import { createExtensionRuntime } from "@mariozechner/pi-coding-agent";
-import type { ResourceLoader } from "@mariozechner/pi-coding-agent";
-import type { ResourceDiagnostic } from "@mariozechner/pi-coding-agent";
-import type { PromptTemplate } from "@mariozechner/pi-coding-agent";
-import type { Theme } from "@mariozechner/pi-coding-agent";
-import type { LoadExtensionsResult } from "@mariozechner/pi-coding-agent";
+import { createExtensionRuntime } from "@earendil-works/pi-coding-agent";
+import type { ResourceLoader } from "@earendil-works/pi-coding-agent";
+import type { ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+import type { PromptTemplate } from "@earendil-works/pi-coding-agent";
+import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import { type Skill, loadSkills } from "./skills.js";
 import { buildSystemPrompt } from "./workspace.js";
