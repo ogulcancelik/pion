@@ -26,6 +26,53 @@ afterEach(() => {
 });
 
 describe("RuntimeInspector IPC", () => {
+	test("drops broken monitor sockets instead of crashing on updates", async () => {
+		const dataDir = makeTempDir();
+		const store = new RuntimeInspectorStore(dataDir);
+		store.registerContext({
+			agentName: "main",
+			contextKey: "telegram:contact:user-1",
+			provider: "telegram",
+			chatId: "chat-1",
+		});
+
+		const server = new RuntimeInspectorServer(store, dataDir);
+		await server.start();
+
+		try {
+			const brokenClient = {
+				destroyed: false,
+				writable: true,
+				write: () => {
+					throw Object.assign(new Error("This socket has been ended by the other party"), {
+						code: "EPIPE",
+					});
+				},
+				destroy: () => {
+					brokenClient.destroyed = true;
+				},
+			};
+			const clients = (server as unknown as { clients: Set<typeof brokenClient> }).clients;
+			clients.add(brokenClient);
+
+			expect(() => {
+				store.handleRuntimeEvent({
+					id: "evt-buffered",
+					timestamp: "2026-04-06T12:00:00.000Z",
+					source: "pion",
+					contextKey: "telegram:contact:user-1",
+					type: "runtime_message_buffered",
+					messageCount: 1,
+				});
+			}).not.toThrow();
+
+			expect(clients.has(brokenClient)).toBe(false);
+			expect(brokenClient.destroyed).toBe(true);
+		} finally {
+			await server.stop();
+		}
+	});
+
 	test("sends the current snapshot to new clients and pushes later updates", async () => {
 		const dataDir = makeTempDir();
 		const store = new RuntimeInspectorStore(dataDir);

@@ -33,16 +33,19 @@ export class RuntimeInspectorServer {
 
 		this.server = createServer((socket) => {
 			this.clients.add(socket);
-			socket.write(encodeSnapshot(this.store.getSnapshot()));
 			socket.on("close", () => {
 				this.clients.delete(socket);
 			});
+			socket.on("error", () => {
+				this.dropClient(socket);
+			});
+			this.writeToClient(socket, encodeSnapshot(this.store.getSnapshot()));
 		});
 
 		this.unsubscribe = this.store.subscribe((snapshot) => {
 			const payload = encodeSnapshot(snapshot);
-			for (const client of this.clients) {
-				client.write(payload);
+			for (const client of [...this.clients]) {
+				this.writeToClient(client, payload);
 			}
 		});
 
@@ -50,6 +53,24 @@ export class RuntimeInspectorServer {
 			this.server?.once("error", reject);
 			this.server?.listen(this.socketFile, () => resolve());
 		});
+	}
+
+	private writeToClient(client: Socket, payload: string): void {
+		if (client.destroyed || !client.writable) {
+			this.dropClient(client);
+			return;
+		}
+
+		try {
+			client.write(payload);
+		} catch {
+			this.dropClient(client);
+		}
+	}
+
+	private dropClient(client: Socket): void {
+		this.clients.delete(client);
+		client.destroy();
 	}
 
 	async stop(): Promise<void> {
