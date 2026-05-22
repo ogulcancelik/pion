@@ -573,7 +573,7 @@ export class PionSqliteIndex {
 				path TEXT,
 				command TEXT,
 				arguments_json TEXT NOT NULL,
-				PRIMARY KEY (session_file, tool_call_id)
+				PRIMARY KEY (session_file, entry_id, tool_call_id)
 			);
 			CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp DESC);
 			CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name);
@@ -622,6 +622,48 @@ export class PionSqliteIndex {
 			CREATE INDEX IF NOT EXISTS idx_runtime_events_context_key ON runtime_events(context_key);
 			CREATE INDEX IF NOT EXISTS idx_runtime_events_type ON runtime_events(event_type);
 		`);
+
+		this.migrateToolCallsPrimaryKey();
+	}
+
+	private migrateToolCallsPrimaryKey(): void {
+		const columns = this.db.query("PRAGMA table_info(tool_calls)").all() as Array<{
+			name: string;
+			pk: number;
+		}>;
+		const primaryKey = columns
+			.filter((column) => column.pk > 0)
+			.sort((a, b) => a.pk - b.pk)
+			.map((column) => column.name);
+		const alreadyMigrated =
+			primaryKey.length === 3 &&
+			primaryKey[0] === "session_file" &&
+			primaryKey[1] === "entry_id" &&
+			primaryKey[2] === "tool_call_id";
+		if (alreadyMigrated) {
+			return;
+		}
+
+		const transaction = this.db.transaction(() => {
+			this.db.exec(`
+				DROP TABLE IF EXISTS tool_calls;
+				CREATE TABLE tool_calls (
+					session_file TEXT NOT NULL,
+					entry_id TEXT NOT NULL,
+					tool_call_id TEXT NOT NULL,
+					timestamp TEXT NOT NULL,
+					tool_name TEXT NOT NULL,
+					path TEXT,
+					command TEXT,
+					arguments_json TEXT NOT NULL,
+					PRIMARY KEY (session_file, entry_id, tool_call_id)
+				);
+				CREATE INDEX IF NOT EXISTS idx_tool_calls_timestamp ON tool_calls(timestamp DESC);
+				CREATE INDEX IF NOT EXISTS idx_tool_calls_name ON tool_calls(tool_name);
+			`);
+			this.db.query("DELETE FROM indexed_files WHERE kind = 'session'").run();
+		});
+		transaction();
 	}
 
 	private shouldReindexFile(path: string, kind: IndexedFileKind): boolean {
