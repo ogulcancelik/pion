@@ -15,6 +15,10 @@ type TestTelegramApi = {
 	editMessageText: (...args: unknown[]) => Promise<true>;
 	deleteMessage: (...args: unknown[]) => Promise<true>;
 	setChatMenuButton: (...args: unknown[]) => Promise<true>;
+	sendDocument?: (...args: unknown[]) => Promise<TelegramApiResult>;
+	raw?: {
+		sendRichMessage?: (...args: unknown[]) => Promise<TelegramApiResult>;
+	};
 	getMe?: () => Promise<{ username: string }>;
 	setMyCommands?: (...args: unknown[]) => Promise<void>;
 };
@@ -94,6 +98,164 @@ describe("TelegramProvider", () => {
 
 	test("has correct type property", () => {
 		expect(typeof TelegramProvider.prototype.isConnected).toBe("function");
+	});
+
+	test("send uses Telegram rich Markdown for assistant text", async () => {
+		const { provider, api } = createProvider();
+		const richCalls: unknown[][] = [];
+		const sendCalls: unknown[][] = [];
+		api.raw = {
+			sendRichMessage: async (...args: unknown[]) => {
+				richCalls.push(args);
+				return {
+					message_id: 88,
+					chat: { id: 123 },
+				};
+			},
+		};
+		api.sendMessage = async (...args: unknown[]) => {
+			sendCalls.push(args);
+			return {
+				message_id: 42,
+				chat: { id: 123 },
+			};
+		};
+
+		const result = await provider.send({
+			chatId: "123",
+			text: "## Plan\n\n- **Ship** rich messages",
+			replyTo: "77",
+		});
+
+		expect(richCalls).toEqual([
+			[
+				{
+					chat_id: "123",
+					rich_message: {
+						markdown: "## Plan\n\n- **Ship** rich messages",
+					},
+					reply_parameters: {
+						message_id: 77,
+					},
+				},
+			],
+		]);
+		expect(sendCalls).toEqual([]);
+		expect(result).toEqual({
+			messageId: "88",
+			chatId: "123",
+		});
+	});
+
+	test("send falls back to normal Telegram HTML when rich messages fail", async () => {
+		const { provider, api } = createProvider();
+		let richCallCount = 0;
+		api.raw = {
+			sendRichMessage: async () => {
+				richCallCount += 1;
+				throw new Error("Bad Request: can't parse rich message");
+			},
+		};
+		let sendArgs: unknown[] | undefined;
+		api.sendMessage = async (...args: unknown[]) => {
+			sendArgs = args;
+			return {
+				message_id: 42,
+				chat: { id: 123 },
+			};
+		};
+
+		const result = await provider.send({
+			chatId: "123",
+			text: "**fallback**",
+			replyTo: "77",
+		});
+
+		expect(richCallCount).toBe(1);
+		expect(sendArgs).toEqual([
+			"123",
+			"<b>fallback</b>",
+			{
+				parse_mode: "HTML",
+				reply_markup: undefined,
+				reply_to_message_id: 77,
+			},
+		]);
+		expect(result).toEqual({
+			messageId: "42",
+			chatId: "123",
+		});
+	});
+
+	test("send falls back to normal Telegram HTML when rich API is unavailable", async () => {
+		const { provider, api } = createProvider();
+		let sendArgs: unknown[] | undefined;
+		api.sendMessage = async (...args: unknown[]) => {
+			sendArgs = args;
+			return {
+				message_id: 42,
+				chat: { id: 123 },
+			};
+		};
+
+		const result = await provider.send({
+			chatId: "123",
+			text: "**plain fallback**",
+		});
+
+		expect(sendArgs).toEqual([
+			"123",
+			"<b>plain fallback</b>",
+			{
+				parse_mode: "HTML",
+				reply_markup: undefined,
+				reply_to_message_id: undefined,
+			},
+		]);
+		expect(result).toEqual({
+			messageId: "42",
+			chatId: "123",
+		});
+	});
+
+	test("send uses rich messages up to Telegram's rich text limit before document fallback", async () => {
+		const { provider, api } = createProvider();
+		const richCalls: unknown[][] = [];
+		const documentCalls: unknown[][] = [];
+		api.raw = {
+			sendRichMessage: async (...args: unknown[]) => {
+				richCalls.push(args);
+				return {
+					message_id: 88,
+					chat: { id: 123 },
+				};
+			},
+		};
+		api.sendDocument = async (...args: unknown[]) => {
+			documentCalls.push(args);
+			return {
+				message_id: 99,
+				chat: { id: 123 },
+			};
+		};
+
+		await provider.send({
+			chatId: "123",
+			text: "a".repeat(4097),
+		});
+		const tooLong = "a".repeat(32769);
+		await provider.send({
+			chatId: "123",
+			text: tooLong,
+		});
+
+		expect(richCalls).toHaveLength(1);
+		expect(documentCalls).toHaveLength(1);
+		expect(documentCalls[0]?.[0]).toBe("123");
+		expect(documentCalls[0]?.[2]).toEqual({
+			caption: "Response too long for a message — full text attached.",
+			reply_to_message_id: undefined,
+		});
 	});
 
 	test("upsertStatus sends a new message when no handle exists", async () => {

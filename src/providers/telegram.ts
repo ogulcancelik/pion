@@ -18,6 +18,23 @@ export interface TelegramProviderConfig {
 	botToken: string;
 }
 
+const TELEGRAM_RICH_TEXT_LIMIT_BYTES = 32768;
+
+type TelegramSendResult = {
+	message_id: number | string;
+	chat: { id: number | string };
+};
+
+type TelegramRawRichApi = {
+	raw?: {
+		sendRichMessage?: (payload: {
+			chat_id: string;
+			rich_message: { markdown: string };
+			reply_parameters?: { message_id: number };
+		}) => Promise<TelegramSendResult>;
+	};
+};
+
 /**
  * Telegram provider using Grammy.
  */
@@ -324,12 +341,11 @@ export class TelegramProvider implements Provider {
 	async send(message: OutboundMessage): Promise<SendResult> {
 		const chatId = message.chatId;
 
-		// Telegram has a 4096 char limit — send long messages as a document
-		if (message.text.length > 4000) {
+		if (new TextEncoder().encode(message.text).length > TELEGRAM_RICH_TEXT_LIMIT_BYTES) {
 			return this.sendAsDocument(chatId, message.text, message.replyTo);
 		}
 
-		return this.sendTextMessage(chatId, message.text, message.replyTo);
+		return this.sendRichTextMessage(chatId, message.text, message.replyTo);
 	}
 
 	async upsertStatus(status: StatusUpdate): Promise<StatusHandle> {
@@ -420,6 +436,37 @@ export class TelegramProvider implements Provider {
 					messageId: String(result.message_id),
 					chatId: String(result.chat.id),
 				};
+			}
+			throw error;
+		}
+	}
+
+	private async sendRichTextMessage(
+		chatId: string,
+		text: string,
+		replyTo?: string,
+	): Promise<SendResult> {
+		const sendRichMessage = (this.bot.api as unknown as TelegramRawRichApi).raw?.sendRichMessage;
+		if (!sendRichMessage) {
+			return this.sendTextMessage(chatId, text, replyTo);
+		}
+
+		try {
+			const result = await sendRichMessage({
+				chat_id: chatId,
+				rich_message: { markdown: text },
+				reply_parameters: replyTo ? { message_id: Number(replyTo) } : undefined,
+			});
+
+			return {
+				messageId: String(result.message_id),
+				chatId: String(result.chat.id),
+			};
+		} catch (error) {
+			const errMsg = error instanceof Error ? error.message : String(error);
+			if (shouldFallbackFromRichMessageError(errMsg)) {
+				console.warn("[telegram] Rich message failed, falling back to normal text");
+				return this.sendTextMessage(chatId, text, replyTo);
 			}
 			throw error;
 		}
@@ -518,4 +565,15 @@ export class TelegramProvider implements Provider {
 	async getMe() {
 		return this.bot.api.getMe();
 	}
+}
+
+function shouldFallbackFromRichMessageError(message: string): boolean {
+	const lower = message.toLowerCase();
+	return (
+		lower.includes("parse") ||
+		lower.includes("entities") ||
+		lower.includes("rich") ||
+		lower.includes("method") ||
+		lower.includes("unsupported")
+	);
 }
