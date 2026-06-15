@@ -13,6 +13,7 @@ import {
 	createBashToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
@@ -23,6 +24,7 @@ import {
 	buildHandoffPrompt,
 	extractHandoffBlock,
 } from "./compactor.js";
+import { DEFAULT_PACKAGES } from "./default-packages.js";
 import { prepareInboundMessage } from "./inbound.js";
 import { createRememberTool } from "./memory-tools.js";
 import { expandTilde, homeDir } from "./paths.js";
@@ -41,6 +43,7 @@ const WARN_THRESHOLD_85 = 85;
 const WARN_THRESHOLD_95 = 95;
 export const DEFAULT_BASH_TIMEOUT_SEC = 300;
 export const DEFAULT_SUBAGENT_PI_BIN = "pi";
+const DEFAULT_PACKAGE_SKILL_SOURCES = new Set(DEFAULT_PACKAGES);
 
 /** Context-usage band (in %) at which a hidden checkpoint cue is injected. */
 const CHECKPOINT_BAND = 20;
@@ -50,6 +53,22 @@ const CHECKPOINT_MAX_MARK = 80;
 /** Hidden cue prepended to the next user turn after crossing a new 20% band. */
 export const CONTEXT_CHECKPOINT_CUE =
 	"[SYSTEM] Checkpoint — not shown to the user, and not a message to reply to. If anything since the last checkpoint is worth remembering long-term (a durable preference, a decision, or a fact about the user or their setup), call the remember tool now. Otherwise do nothing and continue.";
+
+export function filterConfiguredSkills(
+	base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] },
+	names: string[] | undefined,
+): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
+	const selected = new Set(names ?? []);
+	return {
+		skills: base.skills.filter(
+			(skill) =>
+				(skill.sourceInfo.origin === "package" &&
+					DEFAULT_PACKAGE_SKILL_SOURCES.has(skill.sourceInfo.source)) ||
+				selected.has(skill.name),
+		),
+		diagnostics: base.diagnostics,
+	};
+}
 
 export interface RunnerConfig {
 	/** Base data directory (default: ~/.pion). Also the pi agent dir for resource discovery. */
@@ -1026,17 +1045,7 @@ class RunnerSession {
 				const prompt = buildSystemPrompt(this.config.agentConfig);
 				return prompt.length > 0 ? prompt : undefined;
 			},
-			skillsOverride: (base) => {
-				const names = this.config.agentConfig.skills;
-				if (!names || names.length === 0) {
-					return base;
-				}
-				const selected = new Set(names);
-				return {
-					skills: base.skills.filter((s) => selected.has(s.name)),
-					diagnostics: base.diagnostics,
-				};
-			},
+			skillsOverride: (base) => filterConfiguredSkills(base, this.config.agentConfig.skills),
 		});
 		await resourceLoader.reload();
 
@@ -1057,12 +1066,13 @@ class RunnerSession {
 				...memoryTools,
 				// Peer delegation. Defaults the peer to this agent's own configured model
 				// (simplest correct source); a tool call can override per-invocation.
-				// The peer inherits PI_CODING_AGENT_DIR from the daemon process, so it
-				// already reads pion's auth — no explicit piConfigDir needed.
+				// Pass Pion's data dir explicitly so peer auth/package discovery stays
+				// aligned even when the parent environment already had PI_CODING_AGENT_DIR.
 				createSubagentTool({
 					piBin: this.config.subagentPiBin,
 					defaultModel: this.config.agentConfig.model,
 					profiles: this.config.agentProfiles,
+					piConfigDir: this.config.dataDir,
 				}),
 				...createProfileTools(this.config.agentProfiles),
 			],

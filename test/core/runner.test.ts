@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEFAULT_PACKAGES } from "../../src/core/default-packages.js";
 import {
 	buildPromptTextWithMediaPaths,
 	materializeInboundMessage,
@@ -17,6 +18,7 @@ import {
 	buildRuntimeErrorSystemPrompt,
 	classifyRuntimeError,
 	createManagedBashToolDefinition,
+	filterConfiguredSkills,
 	findRetryBranchParentId,
 	loadToolEnvFile,
 	parseModelString,
@@ -25,6 +27,42 @@ import {
 describe("Runner", () => {
 	const testDir = join(import.meta.dir, ".test-runner");
 	let runner: Runner;
+
+	describe("filterConfiguredSkills", () => {
+		test("keeps default package skills and selected local skills only", () => {
+			const makeSkill = (name: string, source: string, origin: "package" | "top-level") => ({
+				name,
+				description: name,
+				filePath: join(testDir, `${name}.md`),
+				baseDir: testDir,
+				disableModelInvocation: false,
+				sourceInfo: {
+					path: join(testDir, `${name}.md`),
+					source,
+					scope: "user" as const,
+					origin,
+				},
+			});
+			const defaultPackageSource = "npm:@ogulcancelik/pi-session-recall";
+			const base = {
+				skills: [
+					makeSkill("session_search", defaultPackageSource, "package"),
+					makeSkill("supervise", join(testDir, "skills"), "top-level"),
+					makeSkill("draft", join(testDir, "skills"), "top-level"),
+					makeSkill("third-party", "npm:someone/third-party", "package"),
+				],
+				diagnostics: [],
+			};
+
+			expect(DEFAULT_PACKAGES).toContain(defaultPackageSource);
+			expect(filterConfiguredSkills(base, []).skills.map((skill) => skill.name)).toEqual([
+				"session_search",
+			]);
+			expect(filterConfiguredSkills(base, ["supervise"]).skills.map((skill) => skill.name)).toEqual(
+				["session_search", "supervise"],
+			);
+		});
+	});
 
 	describe("createManagedBashToolDefinition", () => {
 		test("applies the default timeout when omitted and keeps explicit timeout overrides", async () => {
@@ -347,7 +385,10 @@ describe("Runner", () => {
 	describe("memory tool injection", () => {
 		// Set up a self-contained local provider so RunnerSession.initialize can
 		// build a real agent session without network access.
-		function setupLocalProvider(): { runner: Runner; workspaceDir: string } {
+		function setupLocalProvider(options: { subagentPiBin?: string } = {}): {
+			runner: Runner;
+			workspaceDir: string;
+		} {
 			const workspaceDir = join(testDir, "agents", "main");
 			mkdirSync(workspaceDir, { recursive: true });
 			writeFileSync(join(workspaceDir, "SOUL.md"), "workspace soul\n");
@@ -389,13 +430,29 @@ describe("Runner", () => {
 			const isolatedRunner = new Runner({
 				dataDir: testDir,
 				authPath: join(testDir, "auth.json"),
+				subagentPiBin: options.subagentPiBin,
 			});
 			return { runner: isolatedRunner, workspaceDir };
 		}
 
 		type ToolInspectableSession = {
 			initialize(): Promise<void>;
-			agentSession: { getAllTools(): Array<{ name: string }> };
+			agentSession: {
+				getAllTools(): Array<{
+					name: string;
+				}>;
+				getToolDefinition(name: string):
+					| {
+							execute(
+								toolCallId: string,
+								params: Record<string, unknown>,
+								signal?: AbortSignal,
+								onUpdate?: unknown,
+								ctx?: unknown,
+							): Promise<{ content: Array<{ type: string; text?: string }> }>;
+					  }
+					| undefined;
+			};
 		};
 
 		function createSessionFor(
@@ -444,6 +501,73 @@ describe("Runner", () => {
 			const names = session.agentSession.getAllTools().map((tool) => tool.name);
 			expect(names).toContain("save_subagent");
 			expect(names).toContain("list_subagents");
+		});
+
+		test("passes the runner data dir to subagent pi processes", async () => {
+			const originalPiDir = process.env.PI_CODING_AGENT_DIR;
+			const wrongPiDir = join(testDir, "wrong-pi-dir");
+			process.env.PI_CODING_AGENT_DIR = wrongPiDir;
+			const fakePi = join(testDir, "fake-pi");
+			writeFileSync(
+				fakePi,
+				`#!/usr/bin/env bun
+let buffer = "";
+const decoder = new TextDecoder();
+for await (const chunk of Bun.stdin.stream()) {
+\tbuffer += decoder.decode(chunk);
+\tconst lines = buffer.split("\\n");
+\tbuffer = lines.pop() ?? "";
+\tfor (const line of lines) {
+\t\tif (!line.trim()) continue;
+\t\tconst message = JSON.parse(line);
+\t\tif (message.type === "prompt") {
+\t\t\tconsole.log(JSON.stringify({
+\t\t\t\ttype: "agent_end",
+\t\t\t\tmessages: [{
+\t\t\t\t\trole: "assistant",
+\t\t\t\t\tcontent: [{ type: "text", text: process.env.PI_CODING_AGENT_DIR ?? "" }],
+\t\t\t\t}],
+\t\t\t}));
+\t\t\tprocess.exit(0);
+\t\t}
+\t}
+}
+`,
+				"utf-8",
+			);
+			chmodSync(fakePi, 0o755);
+
+			try {
+				const { runner: isolatedRunner, workspaceDir } = setupLocalProvider({
+					subagentPiBin: fakePi,
+				});
+				const session = await createSessionFor(isolatedRunner, {
+					model: "test-provider/demo-model",
+					workspace: workspaceDir,
+					skills: [],
+				});
+				await session.initialize();
+				const subagent = session.agentSession.getToolDefinition("subagent");
+				expect(subagent).toBeDefined();
+
+				const result = await subagent?.execute(
+					"tool-subagent-env",
+					{
+						task: "report your PI_CODING_AGENT_DIR",
+					},
+					undefined,
+					undefined,
+					{} as never,
+				);
+
+				expect(result?.content[0]?.text).toBe(testDir);
+			} finally {
+				if (originalPiDir === undefined) {
+					process.env.PI_CODING_AGENT_DIR = undefined;
+				} else {
+					process.env.PI_CODING_AGENT_DIR = originalPiDir;
+				}
+			}
 		});
 	});
 
@@ -803,6 +927,16 @@ description: Watch runtime state
 ---
 `,
 			);
+			const unselectedSkillDir = join(skillsDir, "draft");
+			mkdirSync(unselectedSkillDir, { recursive: true });
+			writeFileSync(
+				join(unselectedSkillDir, "SKILL.md"),
+				`---
+name: draft
+description: Draft text
+---
+`,
+			);
 
 			// Skills are discovered from <dataDir>/skills (here testDir/skills).
 			const isolatedRunner = new Runner({
@@ -863,6 +997,21 @@ description: Watch runtime state
 			expect(
 				defaultCwdSession.agentSession.resourceLoader.getSkills().skills.map((skill) => skill.name),
 			).toContain("supervise");
+
+			const emptySkillsSession = await createSession({
+				contextKey: "telegram:contact:empty-skills",
+				agentConfig: {
+					model: "test-provider/demo-model",
+					workspace: workspaceDir,
+					skills: [],
+				},
+			});
+			await emptySkillsSession.initialize();
+			const emptySkillNames = emptySkillsSession.agentSession.resourceLoader
+				.getSkills()
+				.skills.map((skill) => skill.name);
+			expect(emptySkillNames).not.toContain("supervise");
+			expect(emptySkillNames).not.toContain("draft");
 
 			const overrideCwdSession = await createSession({
 				contextKey: "telegram:contact:cwd-override",

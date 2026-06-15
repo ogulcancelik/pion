@@ -4,7 +4,8 @@
 # Optional base runtime directory (default: ~/.pion)
 # dataDir: "~/.pion"
 
-# Optional skills directory (default: ~/.pion/skills)
+# Optional pi-native skills directory (default: ~/.pion/skills).
+# Default packages and extensions still load from the Pion data directory.
 # skillsDir: "~/.pion/skills"
 
 # Optional auth storage path.
@@ -20,10 +21,6 @@
 # Default timeout for bash tool calls in seconds (default: 300).
 # The bash tool can still override this per call.
 # bashTimeoutSec: 300
-
-# Optional global model override for session_query lookups.
-# If unset, Pion uses the active session model.
-# recallQueryModel: "anthropic/claude-haiku-4-5"
 
 # Repo update awareness for the running Pion checkout.
 # On the first real user message of a new day, Pion can check whether this
@@ -58,6 +55,7 @@ cron:
     workspace: "~/.pion/agents/main"
     # Optional execution cwd. Defaults to workspace when omitted.
     # cwd: "~/Projects/some-repo"
+    # Per-agent extra skill selection. Default packages are always available.
     skills:
       - web-browse
 
@@ -73,6 +71,7 @@ agents:
     systemPrompt: |
       You are a helpful assistant with full access to tools and capabilities.
       Be concise but thorough.
+    # Per-agent extra skill selection. Default packages are always available.
     skills:
       - web-browse
       - supervise
@@ -83,6 +82,7 @@ agents:
     systemPrompt: |
       You're chatting in a friend group. Be casual, witty, and fun.
       Keep responses short unless asked for detail.
+    # Empty means no extra local skills beyond default packages.
     skills: []
 
   family:
@@ -91,6 +91,7 @@ agents:
     systemPrompt: |
       You help with everyday questions. Be patient and clear.
       Explain things simply. Use the user's language.
+    # Empty means no extra local skills beyond default packages.
     skills: []
 
 # Routing rules: first match wins.

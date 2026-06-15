@@ -1,6 +1,6 @@
 # Spec: pi-native resource discovery (skills + extensions) and default packages
 
-Status: agreed, in build. Hobby project — no backwards-compat concern; favor the
+Status: implemented. Hobby project — no backwards-compat concern; favor the
 simplest design.
 
 ## Why
@@ -33,12 +33,11 @@ should use that instead of vendoring or re-implementing.
    and installed packages via its built-in package manager. Configure it with:
    - `cwd`, `agentDir: <dataDir>`
    - `systemPromptOverride: () => buildSystemPrompt(agentConfig)` — inject pion's
-     workspace prompt (SOUL/IDENTITY/AGENTS/USER/MEMORY/memory/*).
+     workspace prompt (SOUL/IDENTITY/AGENTS/USER/MEMORY/memory/*/memory/daily/*).
    - `noContextFiles: true` — pion builds its own prompt; don't double-load AGENTS.md.
    - `skillsOverride: (base) => filter by agentConfig.skills` — preserve pion's
      per-agent skill selection.
-   - `eventBus` if available.
-   Call `await reload()` before use if the SDK doesn't.
+   Call `await reload()` before use.
 
 3. **Default packages auto-installed on first run if missing:**
    `@ogulcancelik/pi-session-recall` and `@ogulcancelik/pi-web-browse`. Best-effort,
@@ -46,10 +45,8 @@ should use that instead of vendoring or re-implementing.
    SKILL.md/debug docs live in the package, not in pion.)
 
 4. **Delete native re-implementations:** `src/core/recall-tools.ts` and
-   `src/core/web-tools.ts` plus their tests and runner wiring (`recallQueryModel`,
-   `webBrowseBin`, `createRecallTools`, `createWebTools`). Also delete the
-   hand-rolled `pion-resource-loader.ts` and the single-dir skill loader once
-   `DefaultResourceLoader` replaces them.
+   old web/recall runner wiring. Also delete the hand-rolled
+   `pion-resource-loader.ts` once `DefaultResourceLoader` replaces it.
 
 5. **Memory: load ALL files**, not just recent days. `workspace.ts` loads every
    `memory/*.md` and `memory/daily/*.md` into the system prompt. (Reverts the
@@ -67,13 +64,12 @@ should use that instead of vendoring or re-implementing.
 ## Out of scope / unchanged
 
 - The `subagent`, `remember`, and agent-profile features stay as built. The
-  subagent peer keeps `PI_CODING_AGENT_DIR` so it reads pion's auth (now also the
-  process default).
+  subagent tool passes Pion's data dir as `PI_CODING_AGENT_DIR` to the peer so
+  it reads the same auth and package root as foreground sessions.
 
-## Risks to confirm during build
+## Build confirmations
 
-- Whether `createAgentSession` calls `resourceLoader.reload()` or pion must.
-- Exact install target/command for the default packages (`pi install` vs a
-  programmatic `PackageManager` API) and where installed packages land for
-  discovery.
-- Per-agent skill filtering via `skillsOverride` behaves as expected.
+- Pion calls `resourceLoader.reload()` before session creation.
+- Default packages install through pi's programmatic package manager with `npm:`
+  sources and are persisted for discovery under the Pion data directory.
+- Per-agent `skills` filters extra local skills; default packages stay available.
