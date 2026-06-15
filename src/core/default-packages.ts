@@ -17,7 +17,12 @@ import {
 	SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 
-export const DEFAULT_PACKAGES = ["@ogulcancelik/pi-session-recall", "@ogulcancelik/pi-web-browse"];
+// `npm:` prefix is required — pi's package manager treats a bare scoped name as
+// a local filesystem path, not an npm package.
+export const DEFAULT_PACKAGES = [
+	"npm:@ogulcancelik/pi-session-recall",
+	"npm:@ogulcancelik/pi-web-browse",
+];
 
 export interface EnsureDefaultPackagesOptions {
 	/** Injected for tests; defaults to a real DefaultPackageManager for the dir. */
