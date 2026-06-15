@@ -6,49 +6,79 @@ import {
 	type BashToolDetails,
 	type BashToolInput,
 	type BashToolOptions,
+	DefaultResourceLoader,
 	ModelRegistry,
 	SessionManager,
 	createAgentSession,
 	createBashToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
+import type { ResourceDiagnostic, Skill } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
+import { AgentProfileStore } from "./agent-profiles.js";
 import { getAuthPath } from "./auth.js";
 import {
 	buildContinuationSeedPrompt,
 	buildHandoffPrompt,
 	extractHandoffBlock,
 } from "./compactor.js";
+import { DEFAULT_PACKAGES } from "./default-packages.js";
 import { prepareInboundMessage } from "./inbound.js";
+import { createRememberTool } from "./memory-tools.js";
 import { expandTilde, homeDir } from "./paths.js";
-import { PionResourceLoader } from "./pion-resource-loader.js";
-import { createRecallTools } from "./recall-tools.js";
+import { createProfileTools } from "./profile-tools.js";
 import {
 	type RuntimeEvent,
 	RuntimeEventBus,
 	type RuntimeEventListener,
 	createPiRuntimeEvent,
 } from "./runtime-events.js";
-import { resolveAgentCwd } from "./workspace.js";
+import { createSubagentTool } from "./subagent.js";
+import { buildSystemPrompt, resolveAgentCwd } from "./workspace.js";
 
 /** Warning thresholds for context usage */
 const WARN_THRESHOLD_85 = 85;
 const WARN_THRESHOLD_95 = 95;
 export const DEFAULT_BASH_TIMEOUT_SEC = 300;
+export const DEFAULT_SUBAGENT_PI_BIN = "pi";
+const DEFAULT_PACKAGE_SKILL_SOURCES = new Set(DEFAULT_PACKAGES);
+
+/** Context-usage band (in %) at which a hidden checkpoint cue is injected. */
+const CHECKPOINT_BAND = 20;
+/** Highest band that fires a cue; the final stretch is handled by compaction. */
+const CHECKPOINT_MAX_MARK = 80;
+
+/** Hidden cue prepended to the next user turn after crossing a new 20% band. */
+export const CONTEXT_CHECKPOINT_CUE =
+	"[SYSTEM] Checkpoint — not shown to the user, and not a message to reply to. If anything since the last checkpoint is worth remembering long-term (a durable preference, a decision, or a fact about the user or their setup), call the remember tool now. Otherwise do nothing and continue.";
+
+export function filterConfiguredSkills(
+	base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] },
+	names: string[] | undefined,
+): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
+	const selected = new Set(names ?? []);
+	return {
+		skills: base.skills.filter(
+			(skill) =>
+				(skill.sourceInfo.origin === "package" &&
+					DEFAULT_PACKAGE_SKILL_SOURCES.has(skill.sourceInfo.source)) ||
+				selected.has(skill.name),
+		),
+		diagnostics: base.diagnostics,
+	};
+}
 
 export interface RunnerConfig {
-	/** Base data directory (default: ~/.pion) */
+	/** Base data directory (default: ~/.pion). Also the pi agent dir for resource discovery. */
 	dataDir?: string;
 	/** Path to auth storage (default: ~/.pion/auth.json) */
 	authPath?: string;
-	/** Directory containing skills (default: ~/.pion/skills) */
-	skillsDir?: string;
-	/** Optional global model override for session recall queries. */
-	recallQueryModel?: string;
 	/** Default timeout for bash tool calls in seconds. */
 	bashTimeoutSec?: number;
+	/** Binary name/path for the peer pi CLI used by the subagent tool (default: "pi"). */
+	subagentPiBin?: string;
 	/** Optional dotenv-style env file loaded into tool subprocesses like bash. */
 	toolEnvFile?: string;
 	/** Shared runtime event bus for Pi SDK + daemon events */
@@ -91,10 +121,12 @@ export interface ContextUsageSnapshot {
 	percent: number | null;
 }
 
-/** Warning state per session */
+/** Per-session state derived from context usage (warnings + checkpoint band). */
 interface WarningState {
 	warned85: boolean;
 	warned95: boolean;
+	/** Highest 20% context-usage mark already cued (0 = none yet). */
+	lastCheckpointMark: number;
 }
 
 export function parseModelString(modelString: string): [string, string] {
@@ -322,20 +354,19 @@ export function loadToolEnvFile(envFilePath?: string): Record<string, string> {
  */
 export class Runner {
 	private dataDir: string;
-	private skillsDir: string;
 	private authStorage: AuthStorage;
 	private modelRegistry: ModelRegistry;
 	private runtimeEventBus: RuntimeEventBus;
-	private recallQueryModel?: string;
 	private bashTimeoutSec: number;
+	private subagentPiBin: string;
 	private toolEnv: Record<string, string>;
+	private agentProfiles: AgentProfileStore;
 	private sessions: Map<string, RunnerSession> = new Map();
 	private warningState: Map<string, WarningState> = new Map();
 
 	constructor(config: RunnerConfig = {}) {
 		const home = homeDir();
 		this.dataDir = config.dataDir ? expandTilde(config.dataDir) : join(home, ".pion");
-		this.skillsDir = config.skillsDir ? expandTilde(config.skillsDir) : join(home, ".pion/skills");
 		const authPath = getAuthPath(config);
 
 		// Ensure data directory exists
@@ -347,9 +378,10 @@ export class Runner {
 		const modelsJsonPath = join(this.dataDir, "agents/main/models.json");
 		this.modelRegistry = ModelRegistry.create(this.authStorage, modelsJsonPath);
 		this.runtimeEventBus = config.runtimeEventBus ?? new RuntimeEventBus(this.dataDir);
-		this.recallQueryModel = config.recallQueryModel;
 		this.bashTimeoutSec = config.bashTimeoutSec ?? DEFAULT_BASH_TIMEOUT_SEC;
+		this.subagentPiBin = config.subagentPiBin ?? DEFAULT_SUBAGENT_PI_BIN;
 		this.toolEnv = loadToolEnvFile(config.toolEnvFile);
+		this.agentProfiles = new AgentProfileStore(join(this.dataDir, "agent-profiles.json"));
 	}
 
 	/**
@@ -393,11 +425,7 @@ export class Runner {
 		if (!usage || usage.percent === null) return warnings;
 
 		const pct = Math.round(usage.percent);
-		let state = this.warningState.get(contextKey);
-		if (!state) {
-			state = { warned85: false, warned95: false };
-			this.warningState.set(contextKey, state);
-		}
+		const state = this.warningStateFor(contextKey);
 
 		if (pct >= WARN_THRESHOLD_95 && !state.warned95) {
 			state.warned95 = true;
@@ -414,6 +442,15 @@ export class Runner {
 		return warnings;
 	}
 
+	private warningStateFor(contextKey: string): WarningState {
+		let state = this.warningState.get(contextKey);
+		if (!state) {
+			state = { warned85: false, warned95: false, lastCheckpointMark: 0 };
+			this.warningState.set(contextKey, state);
+		}
+		return state;
+	}
+
 	subscribeRuntimeEvents(listener: RuntimeEventListener): () => void {
 		return this.runtimeEventBus.subscribe(listener);
 	}
@@ -425,6 +462,35 @@ export class Runner {
 	async getContextUsage(context: RunnerContext): Promise<ContextUsageSnapshot | null> {
 		const session = await this.ensureSession(context);
 		return session.getContextUsage();
+	}
+
+	/**
+	 * Return a hidden checkpoint cue if context usage has crossed a new 20% band
+	 * (marks 20/40/60/80; 100 is left to compaction) since the last cue for this
+	 * context, otherwise undefined. Fires at most once per band per session; the
+	 * band tracking resets when the session is cleared (/new) or compacted.
+	 *
+	 * Reads the latest completed turn's usage from the active session, so calling
+	 * it before processing the new message is correct.
+	 */
+	consumeContextCheckpointCue(contextKey: string): string | undefined {
+		const session = this.sessions.get(contextKey);
+		if (!session) return undefined;
+
+		const usage = session.getContextUsage();
+		if (!usage || usage.percent === null) return undefined;
+
+		const mark = Math.min(
+			Math.floor(usage.percent / CHECKPOINT_BAND) * CHECKPOINT_BAND,
+			CHECKPOINT_MAX_MARK,
+		);
+		if (mark < CHECKPOINT_BAND) return undefined;
+
+		const state = this.warningStateFor(contextKey);
+		if (mark <= state.lastCheckpointMark) return undefined;
+
+		state.lastCheckpointMark = mark;
+		return CONTEXT_CHECKPOINT_CUE;
 	}
 
 	async compact(
@@ -467,11 +533,12 @@ export class Runner {
 			agentConfig: context.agentConfig,
 			contextKey: context.contextKey,
 			sessionFile,
-			skillsDir: this.skillsDir,
 			modelRegistry: this.modelRegistry,
 			runtimeEventBus: this.runtimeEventBus,
-			recallQueryModel: this.recallQueryModel,
 			bashTimeoutSec: this.bashTimeoutSec,
+			subagentPiBin: this.subagentPiBin,
+			agentProfiles: this.agentProfiles,
+			dataDir: this.dataDir,
 			toolEnv: this.toolEnv,
 			customTools: context.customTools,
 		});
@@ -516,7 +583,6 @@ export class Runner {
 				// Empty file, just delete
 				const emptyPath = `${sessionFile}.empty`;
 				renameSync(sessionFile, emptyPath);
-				this.runtimeEventBus.removeSessionFile(sessionFile);
 				return emptyPath;
 			}
 
@@ -540,8 +606,6 @@ export class Runner {
 			}
 
 			renameSync(sessionFile, finalPath);
-			this.runtimeEventBus.removeSessionFile(sessionFile);
-			this.runtimeEventBus.syncSessionFile(finalPath);
 			console.log(`[runner] Archived session to ${finalPath}`);
 			return finalPath;
 		} catch (err) {
@@ -607,7 +671,6 @@ export class Runner {
 			sessionFile,
 			`${JSON.stringify(sessionEntry)}\n${JSON.stringify(messageEntry)}\n${JSON.stringify(assistantEntry)}\n`,
 		);
-		this.runtimeEventBus.syncSessionFile(sessionFile);
 	}
 
 	/**
@@ -682,7 +745,6 @@ export class Runner {
 			encoding: "utf-8",
 			flag: "a",
 		});
-		this.runtimeEventBus.syncSessionFile(sessionFile);
 	}
 
 	/**
@@ -734,11 +796,12 @@ interface RunnerSessionConfig {
 	agentConfig: AgentConfig;
 	contextKey: string;
 	sessionFile: string;
-	skillsDir: string;
 	modelRegistry: ModelRegistry;
 	runtimeEventBus: RuntimeEventBus;
-	recallQueryModel?: string;
 	bashTimeoutSec: number;
+	subagentPiBin: string;
+	agentProfiles: AgentProfileStore;
+	dataDir: string;
 	toolEnv: Record<string, string>;
 	customTools?: ToolDefinition[];
 }
@@ -911,7 +974,6 @@ class RunnerSession {
 
 			return textBlocks.join("\n\n");
 		} finally {
-			this.config.runtimeEventBus.syncSessionFile(this.config.sessionFile);
 			unsubscribe();
 		}
 	}
@@ -955,12 +1017,11 @@ class RunnerSession {
 		sessionManager.setSessionFile(this.config.sessionFile);
 		this.sessionManager = sessionManager;
 
-		// Create the agent session
-		const recallTools = createRecallTools({
-			searchSessionMessages: (query, limit) =>
-				this.config.runtimeEventBus.searchSessionMessages(query, limit),
-			recallQueryModel: this.config.recallQueryModel,
-		});
+		// `remember` is provider-agnostic; memory-tools expands the workspace
+		// internally, so pass the raw string.
+		const memoryTools: ToolDefinition[] = this.config.agentConfig.workspace
+			? [createRememberTool({ workspacePath: this.config.agentConfig.workspace }) as ToolDefinition]
+			: [];
 		const managedBashTool = createManagedBashToolDefinition(
 			resolvedCwd,
 			this.config.bashTimeoutSec,
@@ -973,25 +1034,51 @@ class RunnerSession {
 			},
 		);
 
+		// pi-native resource discovery: skills, extensions, and installed packages
+		// (e.g. session-recall, web-browse) from the agent dir. Pion supplies only
+		// its workspace system prompt and its per-agent skill selection.
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: resolvedCwd,
+			agentDir: this.config.dataDir,
+			noContextFiles: true,
+			systemPromptOverride: () => {
+				const prompt = buildSystemPrompt(this.config.agentConfig);
+				return prompt.length > 0 ? prompt : undefined;
+			},
+			skillsOverride: (base) => filterConfiguredSkills(base, this.config.agentConfig.skills),
+		});
+		await resourceLoader.reload();
+
 		const result = await createAgentSession({
 			model,
 			thinkingLevel: this.config.agentConfig.thinkingLevel,
 			cwd: resolvedCwd,
 			sessionManager,
 			modelRegistry: this.config.modelRegistry,
-			resourceLoader: new PionResourceLoader(this.config.agentConfig, this.config.skillsDir),
-			// Custom tools (e.g., Telegram sticker tool) + native recall tools + managed bash.
-			// The pi SDK creates read/edit/write from cwd. Registering bash here overrides
-			// the built-in bash tool so Pion can inject toolEnvFile variables and timeout.
+			resourceLoader,
+			// Native pion tools + managed bash. The pi SDK creates read/edit/write
+			// from cwd. Registering bash here overrides the built-in bash tool so
+			// Pion can inject toolEnvFile variables and timeout. Recall and web come
+			// from installed pi packages via the resource loader, not native tools.
 			customTools: [
 				managedBashTool as unknown as ToolDefinition,
 				...(this.config.customTools ?? []),
-				...recallTools,
+				...memoryTools,
+				// Peer delegation. Defaults the peer to this agent's own configured model
+				// (simplest correct source); a tool call can override per-invocation.
+				// Pass Pion's data dir explicitly so peer auth/package discovery stays
+				// aligned even when the parent environment already had PI_CODING_AGENT_DIR.
+				createSubagentTool({
+					piBin: this.config.subagentPiBin,
+					defaultModel: this.config.agentConfig.model,
+					profiles: this.config.agentProfiles,
+					piConfigDir: this.config.dataDir,
+				}),
+				...createProfileTools(this.config.agentProfiles),
 			],
 		});
 
 		this.agentSession = result.session;
 		this.initialized = true;
-		this.config.runtimeEventBus.syncSessionFile(this.config.sessionFile);
 	}
 }

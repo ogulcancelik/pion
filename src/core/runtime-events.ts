@@ -3,13 +3,6 @@ import { appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { Message, ProviderType } from "../providers/types.js";
-import type {
-	IndexedAttachment,
-	IndexedRuntimeEvent,
-	IndexedSessionMessage,
-	IndexedToolCall,
-} from "./sqlite-index.js";
-import { PionSqliteIndex } from "./sqlite-index.js";
 
 export type PiRuntimeEvent = {
 	id: string;
@@ -163,12 +156,10 @@ export function createMessageReceivedRuntimeEvent(
 export class RuntimeEventBus {
 	private listeners = new Set<RuntimeEventListener>();
 	private runtimeEventsDir: string;
-	private sqliteIndex: PionSqliteIndex;
 
 	constructor(dataDir: string) {
 		this.runtimeEventsDir = join(dataDir, "runtime-events");
 		mkdirSync(this.runtimeEventsDir, { recursive: true });
-		this.sqliteIndex = new PionSqliteIndex(dataDir);
 	}
 
 	subscribe(listener: RuntimeEventListener): () => void {
@@ -189,7 +180,6 @@ export class RuntimeEventBus {
 			this.getEventLogFile(stampedEvent.contextKey),
 			`${JSON.stringify(stampedEvent)}\n`,
 		);
-		this.sqliteIndex.recordRuntimeEvent(stampedEvent);
 
 		for (const listener of this.listeners) {
 			listener(stampedEvent);
@@ -198,49 +188,8 @@ export class RuntimeEventBus {
 		return stampedEvent;
 	}
 
-	syncSessionFile(sessionFile: string): void {
-		this.sqliteIndex.syncSessionFile(sessionFile);
-	}
-
-	removeSessionFile(sessionFile: string): void {
-		this.sqliteIndex.removeSessionFile(sessionFile);
-	}
-
-	reindexSqlite(): void {
-		this.sqliteIndex.reindexAll();
-	}
-
-	getRecentMessages(limit = 20): IndexedSessionMessage[] {
-		return this.sqliteIndex.getRecentMessages(limit);
-	}
-
-	searchSessionMessages(query: string, limit = 20): IndexedSessionMessage[] {
-		return this.sqliteIndex.searchSessionMessages(query, limit);
-	}
-
-	listToolCalls(limit = 20): IndexedToolCall[] {
-		return this.sqliteIndex.listToolCalls(limit);
-	}
-
-	listAttachments(limit = 20): IndexedAttachment[] {
-		return this.sqliteIndex.listAttachments(limit);
-	}
-
-	getRecentRuntimeEvents(limit = 20): IndexedRuntimeEvent[] {
-		return this.sqliteIndex.getRecentRuntimeEvents(limit);
-	}
-
-	searchRuntimeEvents(query: string, limit = 20): IndexedRuntimeEvent[] {
-		return this.sqliteIndex.searchRuntimeEvents(query, limit);
-	}
-
-	getSqliteIndexPath(): string {
-		return this.sqliteIndex.getDatabasePath();
-	}
-
-	close(): void {
-		this.sqliteIndex.close();
-	}
+	/** Lifecycle hook retained for the daemon; nothing to flush without the sqlite index. */
+	close(): void {}
 
 	getEventLogFile(contextKey: string): string {
 		return join(this.runtimeEventsDir, `${sanitizeContextKey(contextKey)}.jsonl`);

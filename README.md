@@ -2,7 +2,7 @@
 
 A simple chat-native agent runtime built on the [pi SDK](https://github.com/badlogic/pi-mono).
 
-Pion stays opinionated and small: one daemon, one current provider surface (Telegram), pi-compatible session files, workspace-driven prompting, selected skills, native recall tools, and a read-only monitor.
+Pion stays opinionated and small: one daemon, one current provider surface (Telegram), pi-compatible session files, workspace-driven prompting, pi-native resource discovery, and a read-only monitor.
 
 > **pion** /ˈpaɪɒn/ — a subatomic particle that mediates forces between others.
 
@@ -11,14 +11,14 @@ Pion stays opinionated and small: one daemon, one current provider surface (Tele
 - **Telegram-first runtime** — text, photos, stickers, voice notes, documents, long responses as Telegram documents when needed
 - **Routing + isolation** — match by DM/group/contact/chat ID with `per-contact` or `per-chat` session isolation
 - **pi-native sessions** — JSONL session files remain the source of truth
-- **Runtime observability** — per-context runtime event logs plus a SQLite sidecar index for search and inspection
-- **Native recall tools** — `session_search` for candidate lookup, `session_query` for Q&A against a past session
-- **Workspace prompting** — `SOUL.md`, `IDENTITY.md`, `AGENTS.md`, `USER.md`, `MEMORY.md`, and `memory/*.md`
+- **Runtime observability** — per-context runtime event logs plus a live monitor snapshot
+- **Default recall/web packages** — Pion installs `pi-session-recall` and `pi-web-browse` into `~/.pion` on first run when missing
+- **Workspace prompting** — `SOUL.md`, `IDENTITY.md`, `AGENTS.md`, `USER.md`, `MEMORY.md`, `memory/*.md`, and `memory/daily/*.md`
 - **Separate prompt/work execution roots** — `workspace` can differ from execution `cwd`
-- **Skills** — selected from `~/.pion/skills/` and loaded through pi's skill system
+- **Skills and extensions** — discovered through pi's resource loader from `~/.pion`
 - **Chat-native control flow** — debounce rapid-fire messages, steer active runs, `/new`, `/compact`, `/stop`
 - **Telegram live status** — editable "working/tool activity" status message while the agent runs
-- **Provider tools** — `send_sticker` and `send_file`
+- **Native/provider tools** — `remember`, `subagent`, `save_subagent`, `list_subagents`, `send_sticker`, and `send_file`
 - **Monitor TUI** — read-only session viewer built with pi-tui components
 
 ## Quick Start
@@ -50,10 +50,10 @@ Config is loaded from:
 See [`pion.example.yaml`](pion.example.yaml) for a working example.
 
 Key concepts:
-- **agents** — choose a model, optional `thinkingLevel`, prompt workspace, optional execution `cwd`, inline prompt text, and enabled skills
+- **agents** — choose a model, optional `thinkingLevel`, prompt workspace, optional execution `cwd`, inline prompt text, and selected extra skills
 - **routes** — first match wins; send a chat to an agent or ignore it with `agent: null`
 - **workspace vs cwd** — `workspace` provides prompt files; `cwd` is where tools/commands execute
-- **recallQueryModel** — optional cheaper/faster model for `session_query`
+- **resource discovery** — default packages plus `~/.pion/skills` and `~/.pion/extensions` are loaded through pi's resource loader
 - **debounceMs** — batch rapid message fragments before a run starts
 
 `thinkingLevel` accepts `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`.
@@ -76,14 +76,14 @@ bun run login minimax --api-key "$MINIMAX_API_KEY"
 bun run login list
 ```
 
-## Native Recall Tools
+## Resource Discovery
 
-Pion injects two native recall tools into agent sessions:
+On daemon startup, Pion points pi's agent directory at `~/.pion` and best-effort installs two default packages when they are missing:
 
-- `session_search(query)` — search indexed past sessions and return matching session files with snippets
-- `session_query(sessionPath, question)` — load one past JSONL session and answer a direct question about it
+- `npm:@ogulcancelik/pi-session-recall`
+- `npm:@ogulcancelik/pi-web-browse`
 
-Search runs against the SQLite sidecar index. Final answers come from the original JSONL session file.
+The session recall package provides `session_search` and `session_query`. Pion itself keeps JSONL session files as the conversation source of truth and does not maintain a SQLite recall sidecar.
 
 ## Runtime Directory
 
@@ -91,11 +91,12 @@ Search runs against the SQLite sidecar index. Final answers come from the origin
 ~/.pion/
 ├── config.yaml
 ├── auth.json                 # Pion auth for multiple providers (schema-compatible with pi auth.json)
-├── index.sqlite              # Derived sidecar index for search/inspection
 ├── runtime-events/           # Per-context runtime event logs (JSONL)
 ├── sessions/                 # pi-compatible session JSONL files
 │   └── archive/              # Archived sessions from /new and /compact
 ├── skills/                   # Skill directories (SKILL.md)
+├── extensions/               # pi-native extensions
+├── agent-profiles.json       # Saved subagent/profile definitions
 └── agents/
     └── main/
         ├── SOUL.md
@@ -139,13 +140,14 @@ Telegram ─▶ Router ─▶ Debounce / Commands ─▶ Runner (pi agent sessio
                            │                      │
                            │                      ├─▶ session JSONL
                            │                      ├─▶ runtime events JSONL
-                           │                      └─▶ SQLite sidecar index
+                           │                      └─▶ monitor snapshot
                            └─▶ Telegram live status
 ```
 
 For more detail:
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/runtime.md`](docs/runtime.md)
+- [`docs/resource-discovery-spec.md`](docs/resource-discovery-spec.md)
 - [`docs/recall-tool-design.md`](docs/recall-tool-design.md)
 
 ## License

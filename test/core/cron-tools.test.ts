@@ -152,6 +152,57 @@ describe("createCronTools", () => {
 		}
 	});
 
+	test("stores a saved profile or ad-hoc model on agent jobs", async () => {
+		const { store, dispose } = setupStore();
+		try {
+			const tools = createCronTools({
+				store,
+				cronAgentConfigured: true,
+				availableSkills: ["web-browse"],
+				chatId: "chat-1",
+				contextKey: "telegram:contact:chat-1",
+				provider: "telegram",
+			});
+			const tool = tools.find((entry) => entry.name === "cronjob");
+			if (!tool) throw new Error("cronjob tool missing");
+
+			await tool.execute(
+				"tool-profile",
+				{
+					action: "create",
+					kind: "agent",
+					name: "with profile",
+					schedule: "0 9 * * 1",
+					prompt: "Do a thing.",
+					profile: "researcher",
+				},
+				undefined,
+				undefined,
+				{} as ExtensionCommandContext,
+			);
+			expect(store.listJobs()[0]?.profile).toBe("researcher");
+
+			await tool.execute(
+				"tool-model",
+				{
+					action: "create",
+					kind: "agent",
+					name: "with model",
+					schedule: "0 9 * * 1",
+					prompt: "Do a thing.",
+					model: "openai/gpt-5",
+				},
+				undefined,
+				undefined,
+				{} as ExtensionCommandContext,
+			);
+			const modelJob = store.listJobs().find((job) => job.name === "with model");
+			expect(modelJob?.model).toBe("openai/gpt-5");
+		} finally {
+			dispose();
+		}
+	});
+
 	test("rejects agent jobs when cron agent defaults are not configured", async () => {
 		const { store, dispose } = setupStore();
 		try {

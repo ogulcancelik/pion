@@ -11,7 +11,7 @@ Telegram ─▶ Router ─▶ Debounce / Commands ─▶ Runner (pi agent sessio
                            │                      │
                            │                      ├─▶ session JSONL (source of truth)
                            │                      ├─▶ runtime event logs
-                           │                      └─▶ SQLite sidecar index
+                           │                      └─▶ monitor snapshot
                            └─▶ Telegram live status sink
 ```
 
@@ -22,7 +22,7 @@ Main responsibilities:
 - **Daemon control flow** handles commands, debouncing, steering, superseding, and recovery
 - **Runner** owns the pi agent session for each context, loads prompt resources, and injects native tools
 - **Runtime event bus** records both daemon-level and pi SDK events
-- **SQLite sidecar** indexes sessions, tool calls, attachments, and runtime events for recall/inspection
+- **Pi resource loader** discovers default packages, user skills, and extensions from the Pion data directory
 
 Pion is currently **Telegram-only**. The provider interface is richer than the current surface, but only Telegram is implemented today.
 
@@ -32,7 +32,6 @@ Pion is currently **Telegram-only**. The provider interface is richer than the c
 ~/.pion/
 ├── config.yaml
 ├── auth.json
-├── index.sqlite
 ├── runtime-events/
 │   └── <context>.jsonl
 ├── sessions/
@@ -40,6 +39,9 @@ Pion is currently **Telegram-only**. The provider interface is richer than the c
 │   └── archive/
 ├── skills/
 │   └── <skill>/SKILL.md
+├── extensions/
+├── agent-profiles.json
+├── cron/
 └── agents/
     └── <agent>/
         ├── SOUL.md
@@ -54,7 +56,7 @@ Pion is currently **Telegram-only**. The provider interface is richer than the c
 Two important boundaries:
 
 - **Session JSONL files are authoritative conversation history**
-- **`index.sqlite` is derived state for fast lookup, search, and monitoring**
+- **Runtime event JSONL files are operational telemetry**
 
 ## Prompt Resources
 
@@ -66,13 +68,14 @@ Pion builds the base system prompt from the agent workspace in a stable order:
 4. `USER.md`
 5. `MEMORY.md`
 6. `memory/*.md` (sorted by filename)
-7. inline `systemPrompt` from config
+7. `memory/daily/*.md` (sorted by filename)
+8. inline `systemPrompt` from config
 
-Selected skills are loaded separately through pi's resource loader.
+Default packages and selected skills are loaded separately through pi's resource loader.
 
 That gives Pion a simple split:
 - **workspace files** = long-lived prompt context
-- **skills** = reusable procedures loaded by name
+- **skills/extensions/packages** = reusable capabilities discovered from `~/.pion`
 - **session history** = conversation state in JSONL
 
 ## Workspace vs Execution CWD
@@ -110,44 +113,16 @@ That log is separate from session history on purpose:
 - session JSONL is the user/assistant/tool conversation record
 - runtime events are operational telemetry
 
-## SQLite Sidecar Index
+## Resource Discovery
 
-`src/core/sqlite-index.ts` maintains a derived SQLite database with:
+Pion points pi's agent directory at the Pion data directory (`~/.pion` by default). That aligns auth, skills, extensions, and installed packages under one root.
 
-- indexed session messages
-- indexed tool calls
-- indexed attachment references
-- indexed runtime events
-- per-session metadata
+On startup, Pion best-effort installs two default packages when missing:
 
-Pion re-syncs session files into the SQLite index after runs complete and records runtime events as they happen.
+- `npm:@ogulcancelik/pi-session-recall`
+- `npm:@ogulcancelik/pi-web-browse`
 
-This makes recall and inspection cheap without replacing JSONL as source of truth.
-
-## Native Recall Tools
-
-Pion injects two native agent-facing recall tools:
-
-### `session_search(query)`
-
-- searches indexed past sessions via SQLite FTS-style lookup
-- returns matching session files with snippets and hit counts
-- meant for candidate discovery
-
-### `session_query(sessionPath, question)`
-
-- opens one specific JSONL session file
-- serializes the relevant conversation
-- asks a model a direct question about that session
-- answers from JSONL, not from SQLite rows alone
-
-So the architecture is:
-- **SQLite** for fast candidate search
-- **JSONL session** for authoritative recall answers
-
-## Skills
-
-Pion uses pi's skill loader, but keeps selection simple and explicit.
+Pion then uses pi's `DefaultResourceLoader` to discover default packages, `~/.pion/skills`, and `~/.pion/extensions`. Pion supplies its own workspace-built system prompt and filters extra skills by each agent's config.
 
 Per agent, config lists skill names:
 
@@ -161,10 +136,7 @@ agents:
 
 Those skills are loaded from `skillsDir` (default `~/.pion/skills`) and exposed through the agent session's resource loader.
 
-Pion does **not** currently load arbitrary pi extensions. The resource loader intentionally provides:
-- workspace system prompt
-- selected skills
-- no custom extension package/runtime discovery
+The default packages remain available even when an agent has `skills: []`; that list controls extra local skill selection.
 
 ## Provider Tools
 
@@ -173,9 +145,13 @@ Telegram-specific tools are injected per run:
 - `send_sticker` — send a named sticker from `stickers.yaml`
 - `send_file` — send a file from the local filesystem
 
-Native recall tools are injected alongside them:
-- `session_search`
-- `session_query`
+Pion-native tools are injected alongside them:
+
+- `remember` — append durable notes to `memory/daily/`
+- `subagent` — delegate a self-contained task to a peer model
+- `save_subagent` / `list_subagents` — manage reusable peer profiles
+
+Recall tools (`session_search`, `session_query`) come from the default `pi-session-recall` package.
 
 ## Message Lifecycle
 
@@ -189,7 +165,7 @@ Native recall tools are injected alongside them:
 8. Attachments are materialized to temp files and referenced in prompt text
 9. Runner resumes or creates the pi agent session
 10. Output streams back to Telegram while runtime events are recorded
-11. Session JSONL and SQLite index are synced
+11. Session JSONL and runtime monitor state are updated
 
 ## Run Control Semantics
 
@@ -212,14 +188,13 @@ Prompt text gets explicit attachment markers like:
 
 That keeps the runtime simple:
 - the agent can inspect actual files if needed
-- attachment references are also discoverable in the SQLite index
+- attachment references remain visible in session/runtime artifacts
 
 ## Current Non-Goals
 
 These are intentionally not part of Pion right now:
 
-- general extension loading
 - alternate provider backends beyond Telegram
 - a separate web UI/control plane
 - replacing JSONL sessions with a database-native conversation store
-- a large autonomous memory platform beyond workspace files + session recall + skills
+- a large autonomous memory platform beyond workspace files + session recall + skills/extensions

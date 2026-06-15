@@ -56,35 +56,40 @@ export function loadWorkspace(workspacePath: string): WorkspaceContent {
 }
 
 /**
- * Load all .md files from the memory/ subdirectory.
- * Returns files sorted by name (so date-named files come in order).
+ * Load all top-level .md files from a directory, sorted by name (so date-named
+ * files come in chronological order). Subdirectories are ignored.
  */
-export function loadMemoryDir(workspacePath: string): MemoryFile[] {
-	const memoryDir = join(workspacePath, "memory");
-
-	if (!existsSync(memoryDir)) {
+function loadMarkdownFilesFromDir(dirPath: string): MemoryFile[] {
+	if (!existsSync(dirPath)) {
 		return [];
 	}
 
-	const entries = readdirSync(memoryDir, { withFileTypes: true });
 	const mdFiles: MemoryFile[] = [];
-
-	for (const entry of entries) {
-		if (!entry.isFile()) continue;
-		if (!entry.name.endsWith(".md")) continue;
-
-		const filePath = join(memoryDir, entry.name);
-		mdFiles.push({
-			name: entry.name,
-			path: filePath,
-			content: readFileSync(filePath, "utf-8"),
-		});
+	for (const entry of readdirSync(dirPath, { withFileTypes: true })) {
+		if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+		const filePath = join(dirPath, entry.name);
+		mdFiles.push({ name: entry.name, path: filePath, content: readFileSync(filePath, "utf-8") });
 	}
 
-	// Sort by name (so 2026-01-25.md comes before 2026-01-26.md)
 	mdFiles.sort((a, b) => a.name.localeCompare(b.name));
-
 	return mdFiles;
+}
+
+/**
+ * Load all .md files from the memory/ subdirectory (curated durable notes).
+ * Ignores the daily/ subdirectory, which is loaded separately by recency.
+ */
+export function loadMemoryDir(workspacePath: string): MemoryFile[] {
+	return loadMarkdownFilesFromDir(join(workspacePath, "memory"));
+}
+
+/**
+ * Load all dated journal files from the memory/daily/ subdirectory (the files
+ * the `remember` tool appends to). Every note is loaded into the system prompt —
+ * persistent memory is the whole point, so nothing is dropped by recency.
+ */
+export function loadDailyNotes(workspacePath: string): MemoryFile[] {
+	return loadMarkdownFilesFromDir(join(workspacePath, "memory", "daily"));
 }
 
 /**
@@ -97,8 +102,9 @@ export function loadMemoryDir(workspacePath: string): MemoryFile[] {
  * 4. USER.md - user context
  * 5. MEMORY.md - persistent notes
  * 6. memory/*.md - memory directory files
- * 7. Inline systemPrompt - additional context
- * 8. Runtime context - time, etc.
+ * 7. memory/daily/*.md - recent dated journal notes
+ * 8. Inline systemPrompt - additional context
+ * 9. Runtime context - time, etc.
  */
 export function buildSystemPrompt(agentConfig: AgentConfig): string {
 	const parts: string[] = [];
@@ -129,6 +135,11 @@ export function buildSystemPrompt(agentConfig: AgentConfig): string {
 		// Memory directory files (sorted by name)
 		for (const memFile of memoryFiles) {
 			parts.push(`## ${memFile.name}\n\n${memFile.content}`);
+		}
+
+		// All dated journal notes from memory/daily/
+		for (const dailyFile of loadDailyNotes(expandedPath)) {
+			parts.push(`## daily/${dailyFile.name}\n\n${dailyFile.content}`);
 		}
 	}
 

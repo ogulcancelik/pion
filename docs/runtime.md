@@ -19,7 +19,7 @@ The daemon owns:
 - message debouncing
 - pi agent session lifecycle
 - runtime event logging
-- SQLite sidecar indexing
+- runtime monitor snapshotting
 - Telegram live status updates
 - crash/restart recovery bookkeeping
 
@@ -31,7 +31,7 @@ The daemon owns:
 │         │                                            │             │
 │         │                                            ├─▶ sessions  │
 │         │                                            ├─▶ events    │
-│         └──────────────▶ Telegram status sink ◀──────└─▶ sqlite    │
+│         └──────────────▶ Telegram status sink ◀──────└─▶ monitor   │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,11 +42,12 @@ On boot, the daemon:
 1. loads config
 2. opens runtime state / recovery markers
 3. ensures configured workspaces exist
-4. constructs the runtime event bus and SQLite sidecar
-5. starts Telegram (if configured)
-6. attaches the Telegram status sink
-7. sends startup / recovery notifications if configured
-8. begins accepting updates
+4. constructs the runtime event bus and monitor store
+5. best-effort installs default pi packages into the Pion data directory
+6. starts Telegram (if configured)
+7. attaches the Telegram status sink
+8. sends startup / recovery notifications if configured
+9. begins accepting updates
 
 ### Message Flow
 
@@ -63,7 +64,7 @@ Normal message path:
 9. Attachments are materialized to temp files under `/tmp/pion-media/<context>/`
 10. Runner resumes or creates the pi agent session
 11. Session output streams back to Telegram
-12. Runtime events are recorded and the SQLite sidecar is synced
+12. Runtime events are recorded and the monitor snapshot is updated
 
 ### Commands
 
@@ -81,9 +82,10 @@ Commands bypass the debounce buffer and cancel any buffered messages for that co
 Each run can include:
 
 - Telegram tools: `send_sticker`, `send_file`
-- Native recall tools: `session_search`, `session_query`
+- Pion-native tools: `remember`, `subagent`, `save_subagent`, `list_subagents`
+- Default package tools/skills: session recall and web browse
 
-Recall uses the SQLite sidecar for lookup and JSONL sessions for final answers.
+Session recall is supplied by the default `pi-session-recall` package. Pion keeps JSONL session files as the conversation source of truth.
 
 ### Live Status on Telegram
 
@@ -134,14 +136,15 @@ At runtime, Pion writes:
 │   └── archive/
 ├── runtime-events/
 │   └── <context>.jsonl
-└── index.sqlite
+├── agent-profiles.json
+└── cron/
 ```
 
 The split is intentional:
 
 - **session JSONL** = conversation history and tool results
 - **runtime-events JSONL** = operational telemetry
-- **index.sqlite** = derived search/inspection index
+- **runtime monitor state** = derived live/offline context selection data
 
 ## Monitor TUI
 
@@ -204,7 +207,7 @@ journalctl --user -u pion -f
 - no separate queue/worker system
 - JSONL sessions remain easy to inspect and back up
 - no IPC layer between runtime and monitor
-- recall/search is fast without changing the source-of-truth format
+- recall/search is delegated to a pi package without changing the source-of-truth format
 
 ### What is intentionally limited
 
