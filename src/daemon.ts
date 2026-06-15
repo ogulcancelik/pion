@@ -17,12 +17,14 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config/loader.js";
 import type { Config, IsolationMode } from "./config/schema.js";
+import { AgentProfileStore } from "./core/agent-profiles.js";
 import { Commands } from "./core/commands.js";
 import { shouldAutoCompact } from "./core/compactor.js";
 import { CronJobStore } from "./core/cron-jobs.js";
 import { CronScheduler } from "./core/cron-scheduler.js";
 import { buildCronPromptBlock, createCronTools } from "./core/cron-tools.js";
 import { MessageDebouncer, mergeMessages } from "./core/debouncer.js";
+import { ensureDefaultPackages } from "./core/default-packages.js";
 import { getOutputDeliveryTarget } from "./core/output-routing.js";
 import { expandTilde, homeDir } from "./core/paths.js";
 import {
@@ -65,7 +67,9 @@ class Daemon {
 	private runtimeInspector: RuntimeInspectorStore;
 	private runtimeInspectorServer: RuntimeInspectorServer;
 	private cronJobStore: CronJobStore;
+	private agentProfiles: AgentProfileStore;
 	private cronScheduler: CronScheduler;
+	private dataDir: string;
 	private recoveryInfo: StartupRecoveryInfo | null = null;
 	private providers: Provider[] = [];
 	private telegramProvider: TelegramProvider | null = null;
@@ -95,6 +99,12 @@ class Daemon {
 		this.debounceMs = config.debounceMs ?? DEFAULT_DEBOUNCE_MS;
 		this.router = new Router(config);
 		const dataDir = config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
+		// Pion is a pi fork: point pi's agent dir at pion's data dir so auth,
+		// skills, extensions, and installed packages all root under ~/.pion.
+		if (!process.env.PI_CODING_AGENT_DIR) {
+			process.env.PI_CODING_AGENT_DIR = dataDir;
+		}
+		this.dataDir = dataDir;
 		this.runtimeEvents = new RuntimeEventBus(dataDir);
 		this.runtimeInspector = new RuntimeInspectorStore(dataDir);
 		this.updateChecker = new RepoUpdateChecker({
@@ -105,11 +115,10 @@ class Daemon {
 		this.runtimeInspectorServer = new RuntimeInspectorServer(this.runtimeInspector, dataDir);
 		this.runtimeEvents.subscribe((event) => this.runtimeInspector.handleRuntimeEvent(event));
 		this.cronJobStore = new CronJobStore({ dataDir });
+		this.agentProfiles = new AgentProfileStore(join(dataDir, "agent-profiles.json"));
 		this.runner = new Runner({
 			dataDir: config.dataDir,
-			skillsDir: config.skillsDir,
 			authPath: config.authPath,
-			recallQueryModel: config.recallQueryModel,
 			bashTimeoutSec: config.bashTimeoutSec,
 			toolEnvFile: config.toolEnvFile,
 			runtimeEventBus: this.runtimeEvents,
@@ -120,13 +129,20 @@ class Daemon {
 			onFlush: (contextKey, messages) => this.processMessages(contextKey, messages),
 		});
 		this.runtimeState = new DaemonRuntimeState(dataDir);
-		this.cronScheduler = new CronScheduler({
+		this.cronScheduler = new CronScheduler(this.buildCronSchedulerConfig({}));
+	}
+
+	private buildCronSchedulerConfig(providers: {
+		telegram?: TelegramProvider;
+	}): ConstructorParameters<typeof CronScheduler>[0] {
+		return {
 			store: this.cronJobStore,
 			runner: this.runner,
 			cronAgent: this.config.cron?.agent,
-			providers: {},
+			agentProfiles: this.agentProfiles,
+			providers,
 			onScriptHandoff: async (msg) => this.handleMessage(msg),
-		});
+		};
 	}
 
 	/** Increment and return the new generation for a context. */
@@ -166,6 +182,12 @@ class Daemon {
 			console.log("✓ Workspace ready: cron.agent");
 		}
 
+		// Install default pi packages (session-recall, web-browse) on first run.
+		// Best-effort and non-fatal — the daemon still starts if offline.
+		await ensureDefaultPackages(process.cwd(), this.dataDir, {
+			log: (message) => console.log(message),
+		});
+
 		await this.runtimeInspectorServer.start();
 		console.log("✓ Runtime inspector socket ready");
 
@@ -179,13 +201,7 @@ class Daemon {
 			await telegram.start();
 			this.providers.push(telegram);
 			this.telegramProvider = telegram;
-			this.cronScheduler = new CronScheduler({
-				store: this.cronJobStore,
-				runner: this.runner,
-				cronAgent: this.config.cron?.agent,
-				providers: { telegram },
-				onScriptHandoff: async (msg) => this.handleMessage(msg),
-			});
+			this.cronScheduler = new CronScheduler(this.buildCronSchedulerConfig({ telegram }));
 			this.detachTelegramStatusSink = new TelegramStatusSink(telegram, {
 				mode: this.config.telegram.status?.mode,
 				clearOnComplete: this.config.telegram.status?.clearOnComplete,
@@ -527,6 +543,18 @@ class Daemon {
 					responseLength: 0,
 				});
 				return;
+			}
+
+			// Consume the checkpoint cue only once we're committed to processing this
+			// turn (past supersede + auto-compact), so a dropped turn never advances the
+			// band mark without delivery, and a just-compacted session is not re-nagged.
+			const checkpointCue = this.runner.consumeContextCheckpointCue(contextKey);
+			if (checkpointCue) {
+				runnerMessage = {
+					...runnerMessage,
+					text: `${checkpointCue}\n\n${runnerMessage.text}`,
+				};
+				console.log("   ℹ️ Injected context checkpoint cue into user turn");
 			}
 
 			this.emitRuntimeEvent({

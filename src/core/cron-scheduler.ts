@@ -2,12 +2,17 @@ import { execSync } from "node:child_process";
 import type { AgentConfig } from "../config/schema.js";
 import { createTelegramTools } from "../providers/telegram-tools.js";
 import type { Message, Provider } from "../providers/types.js";
+import type { AgentProfileStore } from "./agent-profiles.js";
 import type { CronJob, CronJobStore } from "./cron-jobs.js";
 import { type Runner, getUserFacingErrorMessage } from "./runner.js";
 
 const DEFAULT_TICK_MS = 60_000;
 const CRON_AGENT_NOTE =
 	"You are running as a scheduled background job. No user is present. Complete the task fully and write a final response that can be delivered directly to the configured Telegram chat.";
+
+function withCronNote(systemPrompt?: string): string {
+	return systemPrompt ? `${systemPrompt}\n\n---\n\n${CRON_AGENT_NOTE}` : CRON_AGENT_NOTE;
+}
 
 class HandledScheduledJobError extends Error {
 	constructor(public readonly causeError: unknown) {
@@ -20,6 +25,7 @@ export interface CronSchedulerConfig {
 	store: CronJobStore;
 	runner: Runner;
 	cronAgent?: AgentConfig;
+	agentProfiles?: AgentProfileStore;
 	providers: Partial<Record<"telegram", Provider>>;
 	tickMs?: number;
 	onScriptHandoff?: (message: Message) => Promise<void>;
@@ -278,18 +284,35 @@ export class CronScheduler {
 		);
 	}
 
-	private resolveAgentConfig(job: CronJob): AgentConfig {
+	resolveAgentConfig(job: CronJob): AgentConfig {
 		const configured = this.config.cronAgent;
 		if (!configured) {
 			throw new Error("Scheduled agent jobs require cron.agent to be configured.");
 		}
-		return {
+
+		if (job.profile) {
+			const profile = this.config.agentProfiles?.get(job.profile);
+			if (!profile) {
+				throw new Error(`Scheduled job references unknown agent profile: ${job.profile}`);
+			}
+			return {
+				...configured,
+				model: profile.model,
+				thinkingLevel: profile.thinkingLevel ?? configured.thinkingLevel,
+				skills: profile.skills ?? job.skills,
+				systemPrompt: withCronNote(profile.systemPrompt),
+			};
+		}
+
+		const base: AgentConfig = {
 			...configured,
 			skills: job.skills,
-			systemPrompt: configured.systemPrompt
-				? `${configured.systemPrompt}\n\n---\n\n${CRON_AGENT_NOTE}`
-				: CRON_AGENT_NOTE,
+			systemPrompt: withCronNote(configured.systemPrompt),
 		};
+		if (job.model) {
+			base.model = job.model;
+		}
+		return base;
 	}
 
 	private buildScheduledJobFailureText(job: CronJob, error: unknown): string {

@@ -29,6 +29,10 @@ export interface CronJob {
 	updatedAt: string;
 	delivery: CronJobDelivery;
 	agentName?: string;
+	/** Saved agent profile name to run the job as. */
+	profile?: string;
+	/** Ad-hoc "provider/id" model override (one-shot, no saved profile). */
+	model?: string;
 	skills: string[];
 	prompt?: string;
 	message?: string;
@@ -42,6 +46,8 @@ export interface CreateCronJobInput {
 	schedule: string;
 	delivery: CronJobDelivery;
 	agentName?: string;
+	profile?: string;
+	model?: string;
 	skills?: string[];
 	prompt?: string;
 	message?: string;
@@ -52,6 +58,8 @@ export interface UpdateCronJobInput {
 	name?: string;
 	schedule?: string;
 	agentName?: string;
+	profile?: string;
+	model?: string;
 	skills?: string[];
 	prompt?: string;
 	message?: string;
@@ -105,6 +113,8 @@ export class CronJobStore {
 			updatedAt: timestamp,
 			delivery: input.delivery,
 			agentName: input.agentName,
+			profile: input.profile,
+			model: input.model,
 			skills: input.skills ?? [],
 			prompt: input.prompt,
 			message: input.message,
@@ -138,6 +148,8 @@ export class CronJobStore {
 			schedule: { expression },
 			nextRunAt,
 			agentName: input.agentName ?? existing.agentName,
+			profile: input.profile ?? existing.profile,
+			model: input.model ?? existing.model,
 			skills: input.skills ?? existing.skills,
 			prompt: input.prompt ?? existing.prompt,
 			message: input.message ?? existing.message,

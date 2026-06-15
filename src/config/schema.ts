@@ -9,8 +9,6 @@ export interface Config {
 	skillsDir?: string;
 	/** Auth storage path (default: ~/.pion/auth.json, same multi-provider schema as pi auth.json) */
 	authPath?: string;
-	/** Optional global model override for session_query recall lookups. Defaults to the active session model. */
-	recallQueryModel?: string;
 	/** Message debounce window in milliseconds (default: 3000).
 	 *  Batches rapid-fire messages into a single prompt.
 	 *  Set to 0 to disable debouncing. */
@@ -111,10 +109,6 @@ export function validateConfig(config: unknown): string[] {
 	// Must have routes
 	if (!Array.isArray(cfg.routes)) {
 		errors.push("Config must have 'routes' array");
-	}
-
-	if (cfg.recallQueryModel !== undefined && typeof cfg.recallQueryModel !== "string") {
-		errors.push("recallQueryModel must be a string");
 	}
 
 	// Validate debounceMs if present

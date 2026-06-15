@@ -32,6 +32,18 @@ const cronjobSchema = Type.Object({
 		}),
 	),
 	skills: Type.Optional(Type.Array(Type.String())),
+	profile: Type.Optional(
+		Type.String({
+			description:
+				"For kind=agent: run as this saved agent profile (by name). Its model/systemPrompt/thinkingLevel/skills override the default cron agent. Takes precedence over model.",
+		}),
+	),
+	model: Type.Optional(
+		Type.String({
+			description:
+				"For kind=agent: ad-hoc 'provider/id' model to run this job as (one-shot, no saved profile). Ignored if profile is set.",
+		}),
+	),
 	prompt: Type.Optional(Type.String()),
 	message: Type.Optional(Type.String()),
 	command: Type.Optional(
@@ -59,7 +71,7 @@ export function createCronTools(options: CronToolsOptions): ToolDefinition[] {
 		name: "cronjob",
 		label: "Cron Jobs",
 		description:
-			"Manage daemon-owned scheduled jobs. v1 accepts 5-field cron expressions only (minute hour day-of-month month day-of-week). Use kind=reminder for fixed messages, kind=agent for a fresh self-contained background agent run, and kind=script to run a bash command whose stdout is handed into the target session.",
+			"Manage daemon-owned scheduled jobs. v1 accepts 5-field cron expressions only (minute hour day-of-month month day-of-week). Use kind=reminder for fixed messages, kind=agent for a fresh self-contained background agent run, and kind=script to run a bash command whose stdout is handed into the target session. kind=agent jobs run on the default cron agent unless you set profile (a saved agent profile by name) or model (an ad-hoc 'provider/id'); profile wins if both are given.",
 		promptSnippet:
 			"cronjob(action, ...) - create/list/update/pause/resume/remove/run_now daemon-owned scheduled jobs using 5-field cron expressions. kind=script runs a command and hands stdout into the target session",
 		promptGuidelines: [
@@ -130,6 +142,8 @@ function updateJob(options: CronToolsOptions, params: CronToolParams): string {
 			name: params.name,
 			schedule: params.schedule,
 			skills: params.skills,
+			profile: params.profile,
+			model: params.profile ? undefined : params.model,
 			prompt: params.prompt,
 			message: params.message,
 			command: params.command,
@@ -187,6 +201,9 @@ function buildCreateInput(
 			},
 			skills: params.skills ?? [],
 			prompt: params.prompt,
+			profile: params.profile,
+			// profile takes precedence; only carry an ad-hoc model when no profile is set.
+			model: params.profile ? undefined : params.model,
 		};
 	}
 	if (kind === "script") {

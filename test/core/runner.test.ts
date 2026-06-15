@@ -10,6 +10,7 @@ import {
 	resolveFetchedImageMimeType,
 } from "../../src/core/inbound.js";
 import {
+	CONTEXT_CHECKPOINT_CUE,
 	DEFAULT_BASH_TIMEOUT_SEC,
 	Runner,
 	UserFacingError,
@@ -251,6 +252,198 @@ describe("Runner", () => {
 			// We can't directly check warningState (private), but clearSession
 			// should not throw when clearing non-existent warning state
 			expect(() => runner.clearSession("some:key")).not.toThrow();
+		});
+	});
+
+	describe("consumeContextCheckpointCue", () => {
+		const contextKey = "telegram:contact:checkpoint";
+
+		// Fake session whose reported context usage is mutable per test.
+		function installFakeSession(testRunner: Runner): { percent: number | null } {
+			const usage = { percent: 0 as number | null };
+			const fakeSession = {
+				prompt: async () => "ok",
+				getContextUsage: () =>
+					usage.percent === null ? null : { tokens: 1, contextWindow: 100, percent: usage.percent },
+			};
+			(testRunner as unknown as { createSession(): Promise<typeof fakeSession> }).createSession =
+				async () => fakeSession;
+			return usage;
+		}
+
+		// Populate runner.sessions for contextKey using the public getContextUsage path.
+		async function ensure(testRunner: Runner): Promise<void> {
+			await testRunner.getContextUsage({
+				contextKey,
+				agentConfig: {
+					model: "anthropic/claude-sonnet-4-20250514",
+					workspace: join(testDir, "agents", "main"),
+					skills: [],
+				},
+			});
+		}
+
+		test("returns undefined when no session exists", () => {
+			expect(runner.consumeContextCheckpointCue("never:initialized")).toBeUndefined();
+		});
+
+		test("returns undefined below the first 20% band", async () => {
+			const usage = installFakeSession(runner);
+			await ensure(runner);
+			usage.percent = 19;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBeUndefined();
+		});
+
+		test("fires once on crossing 20%, then stays silent at the same band", async () => {
+			const usage = installFakeSession(runner);
+			await ensure(runner);
+
+			usage.percent = 25;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBe(CONTEXT_CHECKPOINT_CUE);
+			// Same band, second call → no cue.
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBeUndefined();
+			usage.percent = 39;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBeUndefined();
+		});
+
+		test("fires again when crossing the next band (40%)", async () => {
+			const usage = installFakeSession(runner);
+			await ensure(runner);
+
+			usage.percent = 25;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBe(CONTEXT_CHECKPOINT_CUE);
+			usage.percent = 41;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBe(CONTEXT_CHECKPOINT_CUE);
+		});
+
+		test("caps at 80% and never fires for the 100% band", async () => {
+			const usage = installFakeSession(runner);
+			await ensure(runner);
+
+			usage.percent = 85;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBe(CONTEXT_CHECKPOINT_CUE);
+			// Already at the 80 cap; crossing into 100% must not fire again.
+			usage.percent = 100;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBeUndefined();
+		});
+
+		test("clearSession resets the band so the next crossing fires again", async () => {
+			const usage = installFakeSession(runner);
+			await ensure(runner);
+
+			usage.percent = 45;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBe(CONTEXT_CHECKPOINT_CUE);
+
+			runner.clearSession(contextKey);
+			// Session is gone after clear → no cue until re-initialized.
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBeUndefined();
+
+			await ensure(runner);
+			usage.percent = 25;
+			expect(runner.consumeContextCheckpointCue(contextKey)).toBe(CONTEXT_CHECKPOINT_CUE);
+		});
+	});
+
+	describe("memory tool injection", () => {
+		// Set up a self-contained local provider so RunnerSession.initialize can
+		// build a real agent session without network access.
+		function setupLocalProvider(): { runner: Runner; workspaceDir: string } {
+			const workspaceDir = join(testDir, "agents", "main");
+			mkdirSync(workspaceDir, { recursive: true });
+			writeFileSync(join(workspaceDir, "SOUL.md"), "workspace soul\n");
+			writeFileSync(
+				join(workspaceDir, "models.json"),
+				`${JSON.stringify(
+					{
+						providers: {
+							"test-provider": {
+								baseUrl: "http://127.0.0.1:1/v1",
+								apiKey: "TEST_PROVIDER_API_KEY",
+								api: "openai-responses",
+								models: [
+									{
+										id: "demo-model",
+										name: "Demo Model",
+										input: ["text"],
+										reasoning: true,
+										cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+										contextWindow: 4096,
+										maxTokens: 256,
+									},
+								],
+							},
+						},
+					},
+					null,
+					2,
+				)}\n`,
+			);
+			writeFileSync(
+				join(testDir, "auth.json"),
+				`${JSON.stringify(
+					{ "test-provider": { type: "api_key", key: "test-secret-key" } },
+					null,
+					2,
+				)}\n`,
+			);
+			const isolatedRunner = new Runner({
+				dataDir: testDir,
+				authPath: join(testDir, "auth.json"),
+			});
+			return { runner: isolatedRunner, workspaceDir };
+		}
+
+		type ToolInspectableSession = {
+			initialize(): Promise<void>;
+			agentSession: { getAllTools(): Array<{ name: string }> };
+		};
+
+		function createSessionFor(
+			isolatedRunner: Runner,
+			agentConfig: { model: string; workspace?: string; skills: string[] },
+		): Promise<ToolInspectableSession> {
+			return (
+				isolatedRunner as unknown as {
+					createSession(context: {
+						contextKey: string;
+						agentConfig: { model: string; workspace?: string; skills: string[] };
+					}): Promise<ToolInspectableSession>;
+				}
+			).createSession({ contextKey: "telegram:contact:mem", agentConfig });
+		}
+
+		test("registers the remember tool when a workspace is set", async () => {
+			const { runner: isolatedRunner, workspaceDir } = setupLocalProvider();
+			const session = await createSessionFor(isolatedRunner, {
+				model: "test-provider/demo-model",
+				workspace: workspaceDir,
+				skills: [],
+			});
+			await session.initialize();
+			expect(session.agentSession.getAllTools().map((tool) => tool.name)).toContain("remember");
+		});
+
+		test("omits the remember tool when no workspace is set", async () => {
+			const { runner: isolatedRunner } = setupLocalProvider();
+			const session = await createSessionFor(isolatedRunner, {
+				model: "test-provider/demo-model",
+				skills: [],
+			});
+			await session.initialize();
+			expect(session.agentSession.getAllTools().map((tool) => tool.name)).not.toContain("remember");
+		});
+
+		test("registers the subagent profile tools", async () => {
+			const { runner: isolatedRunner, workspaceDir } = setupLocalProvider();
+			const session = await createSessionFor(isolatedRunner, {
+				model: "test-provider/demo-model",
+				workspace: workspaceDir,
+				skills: [],
+			});
+			await session.initialize();
+			const names = session.agentSession.getAllTools().map((tool) => tool.name);
+			expect(names).toContain("save_subagent");
+			expect(names).toContain("list_subagents");
 		});
 	});
 
@@ -611,10 +804,10 @@ description: Watch runtime state
 `,
 			);
 
+			// Skills are discovered from <dataDir>/skills (here testDir/skills).
 			const isolatedRunner = new Runner({
 				dataDir: testDir,
 				authPath: join(testDir, "auth.json"),
-				skillsDir,
 			});
 
 			type TestRunnerSession = {

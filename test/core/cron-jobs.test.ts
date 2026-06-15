@@ -95,6 +95,34 @@ describe("CronJobStore", () => {
 		expect(store.getJob(job.id)).toBeUndefined();
 	});
 
+	test("round-trips profile and model fields on create and update", () => {
+		const job = store.createJob(
+			{
+				kind: "agent",
+				name: "profiled research",
+				schedule: "0 9 * * 1",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				prompt: "Summarize the week.",
+				profile: "researcher",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+
+		expect(job.profile).toBe("researcher");
+		expect(store.getJob(job.id)?.profile).toBe("researcher");
+
+		const persisted = JSON.parse(readFileSync(store.jobsFile, "utf-8"));
+		expect(persisted.jobs[0].profile).toBe("researcher");
+
+		const updated = store.updateJob(
+			job.id,
+			{ profile: undefined, model: "google/gemini-2.5-pro" },
+			new Date("2026-04-03T08:30:00Z"),
+		);
+		expect(updated?.model).toBe("google/gemini-2.5-pro");
+		expect(store.getJob(job.id)?.model).toBe("google/gemini-2.5-pro");
+	});
+
 	test("persists script job command", () => {
 		const job = store.createJob(
 			{

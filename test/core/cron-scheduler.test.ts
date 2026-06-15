@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentConfig } from "../../src/config/schema.js";
+import { AgentProfileStore } from "../../src/core/agent-profiles.js";
 import { CronJobStore } from "../../src/core/cron-jobs.js";
 import { CronScheduler } from "../../src/core/cron-scheduler.js";
 import { type Runner, UserFacingError } from "../../src/core/runner.js";
@@ -188,6 +189,125 @@ describe("CronScheduler", () => {
 		const output = readFileSync(job?.lastOutputPath || "", "utf-8");
 		expect(output).toContain("first block");
 		expect(output).toContain("second block");
+	});
+
+	test("resolveAgentConfig resolves a saved profile's model, systemPrompt, and skills", () => {
+		const profiles = new AgentProfileStore(join(dataDir, "agent-profiles.json"));
+		profiles.save({
+			name: "researcher",
+			model: "google/gemini-2.5-pro",
+			systemPrompt: "You are a meticulous researcher.",
+			thinkingLevel: "high",
+			skills: ["web-browse"],
+		});
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			agentProfiles: profiles,
+			providers: { telegram: provider },
+		});
+		const job = store.createJob(
+			{
+				kind: "agent",
+				name: "profiled",
+				schedule: "0 9 * * 1",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				prompt: "Do research.",
+				skills: ["supervise"],
+				profile: "researcher",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+
+		const resolved = scheduler.resolveAgentConfig(job);
+		expect(resolved.model).toBe("google/gemini-2.5-pro");
+		expect(resolved.workspace).toBe(cronAgent.workspace);
+		expect(resolved.thinkingLevel).toBe("high");
+		expect(resolved.skills).toEqual(["web-browse"]);
+		expect(resolved.systemPrompt).toContain("You are a meticulous researcher.");
+		expect(resolved.systemPrompt).toContain("You are running as a scheduled background job.");
+	});
+
+	test("resolveAgentConfig overrides only the model for an ad-hoc model job", () => {
+		const profiles = new AgentProfileStore(join(dataDir, "agent-profiles.json"));
+		cronAgent.systemPrompt = "base prompt";
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			agentProfiles: profiles,
+			providers: { telegram: provider },
+		});
+		const job = store.createJob(
+			{
+				kind: "agent",
+				name: "adhoc",
+				schedule: "0 9 * * 1",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				prompt: "Do research.",
+				skills: ["supervise"],
+				model: "openai/gpt-5",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+
+		const resolved = scheduler.resolveAgentConfig(job);
+		expect(resolved.model).toBe("openai/gpt-5");
+		expect(resolved.workspace).toBe(cronAgent.workspace);
+		expect(resolved.skills).toEqual(["supervise"]);
+		expect(resolved.systemPrompt).toContain("base prompt");
+		expect(resolved.systemPrompt).toContain("You are running as a scheduled background job.");
+	});
+
+	test("resolveAgentConfig falls back to the base cron agent when neither profile nor model is set", () => {
+		const profiles = new AgentProfileStore(join(dataDir, "agent-profiles.json"));
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			agentProfiles: profiles,
+			providers: { telegram: provider },
+		});
+		const job = store.createJob(
+			{
+				kind: "agent",
+				name: "default",
+				schedule: "0 9 * * 1",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				prompt: "Do research.",
+				skills: ["supervise"],
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+
+		const resolved = scheduler.resolveAgentConfig(job);
+		expect(resolved.model).toBe(cronAgent.model);
+		expect(resolved.skills).toEqual(["supervise"]);
+	});
+
+	test("resolveAgentConfig throws for an unknown profile", () => {
+		const profiles = new AgentProfileStore(join(dataDir, "agent-profiles.json"));
+		const scheduler = new CronScheduler({
+			store,
+			runner: runner as Runner,
+			cronAgent,
+			agentProfiles: profiles,
+			providers: { telegram: provider },
+		});
+		const job = store.createJob(
+			{
+				kind: "agent",
+				name: "broken",
+				schedule: "0 9 * * 1",
+				delivery: { provider: "telegram", chatId: "chat-1", contextKey: "telegram:contact:chat-1" },
+				prompt: "Do research.",
+				profile: "missing",
+			},
+			new Date("2026-04-03T08:00:00Z"),
+		);
+
+		expect(() => scheduler.resolveAgentConfig(job)).toThrow(/missing/);
 	});
 
 	test("sends one user-facing failure notice for scheduled agent job errors", async () => {
