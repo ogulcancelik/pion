@@ -25,6 +25,7 @@ import { CronScheduler } from "./core/cron-scheduler.js";
 import { buildCronPromptBlock, createCronTools } from "./core/cron-tools.js";
 import { MessageDebouncer, mergeMessages } from "./core/debouncer.js";
 import { ensureDefaultPackages } from "./core/default-packages.js";
+import { ensureDefaultSkills } from "./core/default-skills.js";
 import { getOutputDeliveryTarget } from "./core/output-routing.js";
 import { expandTilde, homeDir } from "./core/paths.js";
 import {
@@ -182,9 +183,14 @@ class Daemon {
 			console.log("✓ Workspace ready: cron.agent");
 		}
 
-		// Install default pi packages (session-recall, web-browse) on first run.
+		// Install default pi packages and bundled local skills on first run.
 		// Best-effort and non-fatal — the daemon still starts if offline.
 		await ensureDefaultPackages(process.cwd(), this.dataDir, {
+			log: (message) => console.log(message),
+		});
+		ensureDefaultSkills({
+			dataDir: this.dataDir,
+			skillsDir: this.config.skillsDir ? expandTilde(this.config.skillsDir) : undefined,
 			log: (message) => console.log(message),
 		});
 

@@ -29,7 +29,7 @@ describe("Runner", () => {
 	let runner: Runner;
 
 	describe("filterConfiguredSkills", () => {
-		test("keeps default package skills and selected local skills only", () => {
+		test("keeps default package skills, bundled default local skills, and selected local skills only", () => {
 			const makeSkill = (name: string, source: string, origin: "package" | "top-level") => ({
 				name,
 				description: name,
@@ -47,6 +47,7 @@ describe("Runner", () => {
 			const base = {
 				skills: [
 					makeSkill("session_search", defaultPackageSource, "package"),
+					makeSkill("pi-speech-to-text", join(testDir, "skills"), "top-level"),
 					makeSkill("supervise", join(testDir, "skills"), "top-level"),
 					makeSkill("draft", join(testDir, "skills"), "top-level"),
 					makeSkill("third-party", "npm:someone/third-party", "package"),
@@ -57,9 +58,10 @@ describe("Runner", () => {
 			expect(DEFAULT_PACKAGES).toContain(defaultPackageSource);
 			expect(filterConfiguredSkills(base, []).skills.map((skill) => skill.name)).toEqual([
 				"session_search",
+				"pi-speech-to-text",
 			]);
 			expect(filterConfiguredSkills(base, ["supervise"]).skills.map((skill) => skill.name)).toEqual(
-				["session_search", "supervise"],
+				["session_search", "pi-speech-to-text", "supervise"],
 			);
 		});
 	});

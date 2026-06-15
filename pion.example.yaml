@@ -57,7 +57,7 @@ cron:
     # cwd: "~/Projects/some-repo"
     # Per-agent extra skill selection. Default packages are always available.
     skills:
-      - web-browse
+      - pi-speech-to-text
 
 agents:
   main:
@@ -73,8 +73,7 @@ agents:
       Be concise but thorough.
     # Per-agent extra skill selection. Default packages are always available.
     skills:
-      - web-browse
-      - supervise
+      - pi-speech-to-text
 
   casual:
     model: anthropic/claude-sonnet-4-20250514

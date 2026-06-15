@@ -25,6 +25,7 @@ import {
 	extractHandoffBlock,
 } from "./compactor.js";
 import { DEFAULT_PACKAGES } from "./default-packages.js";
+import { DEFAULT_SKILLS } from "./default-skills.js";
 import { prepareInboundMessage } from "./inbound.js";
 import { createRememberTool } from "./memory-tools.js";
 import { expandTilde, homeDir } from "./paths.js";
@@ -44,6 +45,7 @@ const WARN_THRESHOLD_95 = 95;
 export const DEFAULT_BASH_TIMEOUT_SEC = 300;
 export const DEFAULT_SUBAGENT_PI_BIN = "pi";
 const DEFAULT_PACKAGE_SKILL_SOURCES = new Set(DEFAULT_PACKAGES);
+const DEFAULT_LOCAL_SKILLS = new Set(DEFAULT_SKILLS);
 
 /** Context-usage band (in %) at which a hidden checkpoint cue is injected. */
 const CHECKPOINT_BAND = 20;
@@ -64,6 +66,7 @@ export function filterConfiguredSkills(
 			(skill) =>
 				(skill.sourceInfo.origin === "package" &&
 					DEFAULT_PACKAGE_SKILL_SOURCES.has(skill.sourceInfo.source)) ||
+				DEFAULT_LOCAL_SKILLS.has(skill.name) ||
 				selected.has(skill.name),
 		),
 		diagnostics: base.diagnostics,

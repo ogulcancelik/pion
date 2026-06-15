@@ -6,6 +6,9 @@
  *   - session recall (the `session_search`/`session_query` extension), and
  *   - web-browse (the search/fetch skill).
  *
+ * Small deployment-local skills that are not published as packages live in
+ * `resources/default-skills` and are installed by `default-skills.ts`.
+ *
  * With PI_CODING_AGENT_DIR pointed at pion's data dir, these install under
  * `<dataDir>` and are discovered by the pi resource loader on session start.
  * The author maintains both packages; their SKILL.md/docs live upstream.

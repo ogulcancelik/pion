@@ -1,4 +1,4 @@
-# Spec: pi-native resource discovery (skills + extensions) and default packages
+# Spec: pi-native resource discovery (skills + extensions), default packages, and bundled skills
 
 Status: implemented. Hobby project — no backwards-compat concern; favor the
 simplest design.
@@ -44,11 +44,16 @@ should use that instead of vendoring or re-implementing.
    non-fatal on failure, only when absent. (Author maintains these upstream; their
    SKILL.md/debug docs live in the package, not in pion.)
 
-4. **Delete native re-implementations:** `src/core/recall-tools.ts` and
+4. **Bundled default local skills copied on first run if missing:**
+   `pi-speech-to-text` lives in `resources/default-skills` because it is a small
+   deployment helper around local `ffmpeg` + `whisper-cli`, not a published pi
+   package. Existing user skill directories are never overwritten.
+
+5. **Delete native re-implementations:** `src/core/recall-tools.ts` and
    old web/recall runner wiring. Also delete the hand-rolled
    `pion-resource-loader.ts` once `DefaultResourceLoader` replaces it.
 
-5. **Memory: load ALL files**, not just recent days. `workspace.ts` loads every
+6. **Memory: load ALL files**, not just recent days. `workspace.ts` loads every
    `memory/*.md` and `memory/daily/*.md` into the system prompt. (Reverts the
    3-day cap added earlier.)
 
@@ -59,6 +64,7 @@ should use that instead of vendoring or re-implementing.
 - Default skill (installed package): `web-browse`.
 - Default extension (installed package): `session-recall` (`session_search` /
   `session_query` / `/session-recall`).
+- Bundled local skill: `pi-speech-to-text` copied to `~/.pion/skills` if absent.
 - User layer: `~/.pion/skills` and `~/.pion/extensions` (pi-native discovery).
 
 ## Out of scope / unchanged
@@ -72,4 +78,4 @@ should use that instead of vendoring or re-implementing.
 - Pion calls `resourceLoader.reload()` before session creation.
 - Default packages install through pi's programmatic package manager with `npm:`
   sources and are persisted for discovery under the Pion data directory.
-- Per-agent `skills` filters extra local skills; default packages stay available.
+- Per-agent `skills` filters additional local skills; default packages and bundled default local skills stay available.

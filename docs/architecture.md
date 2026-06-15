@@ -122,6 +122,10 @@ On startup, Pion best-effort installs two default packages when missing:
 - `npm:@ogulcancelik/pi-session-recall`
 - `npm:@ogulcancelik/pi-web-browse`
 
+It also copies bundled default local skills when missing:
+
+- `pi-speech-to-text` — local voice/audio transcription through `ffmpeg` and `whisper-cli`
+
 Pion then uses pi's `DefaultResourceLoader` to discover default packages, `~/.pion/skills`, and `~/.pion/extensions`. Pion supplies its own workspace-built system prompt and filters extra skills by each agent's config.
 
 Per agent, config lists skill names:
@@ -130,13 +134,12 @@ Per agent, config lists skill names:
 agents:
   main:
     skills:
-      - web-browse
-      - supervise
+      - pi-speech-to-text
 ```
 
 Those skills are loaded from `skillsDir` (default `~/.pion/skills`) and exposed through the agent session's resource loader.
 
-The default packages remain available even when an agent has `skills: []`; that list controls extra local skill selection.
+The default packages and bundled default local skills remain available even when an agent has `skills: []`; that list controls additional local skill selection.
 
 ## Provider Tools
 

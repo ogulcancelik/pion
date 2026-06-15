@@ -43,7 +43,7 @@ On boot, the daemon:
 2. opens runtime state / recovery markers
 3. ensures configured workspaces exist
 4. constructs the runtime event bus and monitor store
-5. best-effort installs default pi packages into the Pion data directory
+5. best-effort installs default pi packages and bundled default local skills into the Pion data directory
 6. starts Telegram (if configured)
 7. attaches the Telegram status sink
 8. sends startup / recovery notifications if configured
@@ -84,6 +84,7 @@ Each run can include:
 - Telegram tools: `send_sticker`, `send_file`
 - Pion-native tools: `remember`, `subagent`, `save_subagent`, `list_subagents`
 - Default package tools/skills: session recall and web browse
+- Bundled local skills: speech-to-text for voice/audio transcription
 
 Session recall is supplied by the default `pi-session-recall` package. Pion keeps JSONL session files as the conversation source of truth.
 
