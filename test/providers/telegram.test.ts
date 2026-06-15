@@ -401,7 +401,7 @@ describe("TelegramProvider", () => {
 			id: "photo-1",
 			chatId: "123",
 			senderId: "7",
-			senderName: "Can",
+			senderName: "Alex",
 			text: "",
 			media: [{ type: "image", url: "https://example.com/photo.jpg", mimeType: "image/jpeg" }],
 			isGroup: false,
@@ -415,7 +415,7 @@ describe("TelegramProvider", () => {
 				id: "photo-1",
 				chatId: "123",
 				senderId: "7",
-				senderName: "Can",
+				senderName: "Alex",
 				text: "",
 				media: [{ type: "image", url: "https://example.com/photo.jpg", mimeType: "image/jpeg" }],
 				isGroup: false,
@@ -436,7 +436,7 @@ describe("TelegramProvider", () => {
 			id: "voice-1",
 			chatId: "123",
 			senderId: "7",
-			senderName: "Can",
+			senderName: "Alex",
 			text: "",
 			media: [
 				{
@@ -457,7 +457,7 @@ describe("TelegramProvider", () => {
 				id: "voice-1",
 				chatId: "123",
 				senderId: "7",
-				senderName: "Can",
+				senderName: "Alex",
 				text: "",
 				media: [
 					{
@@ -509,7 +509,7 @@ describe("TelegramProvider", () => {
 				message_id: 99,
 				date: 1712091600,
 				chat: { id: 123, type: "private" },
-				from: { id: 7, first_name: "Can", username: "can" },
+				from: { id: 7, first_name: "Alex", username: "alex" },
 				sticker: {
 					file_id: "sticker-file-id",
 					file_unique_id: "sticker-unique-id",
@@ -529,7 +529,7 @@ describe("TelegramProvider", () => {
 				id: "99",
 				chatId: "123",
 				senderId: "7",
-				senderName: "Can",
+				senderName: "Alex",
 				text: "Sticker sent. Emoji equivalent: 😌. Pack: Peepo pepe @peepopepe (Peepo_Pepe).",
 				isGroup: false,
 				provider: "telegram",
@@ -548,7 +548,7 @@ describe("TelegramProvider", () => {
 
 		dispatchTestAction(provider, {
 			id: "cbq-1",
-			from: { id: 7, first_name: "Can", username: "can" },
+			from: { id: 7, first_name: "Alex", username: "alex" },
 			data: "stop",
 			message: {
 				message_id: 42,
@@ -562,7 +562,7 @@ describe("TelegramProvider", () => {
 				id: "cbq-1",
 				chatId: "123",
 				senderId: "7",
-				senderName: "Can",
+				senderName: "Alex",
 				provider: "telegram",
 				timestamp: new Date(1712091600 * 1000),
 				isGroup: false,

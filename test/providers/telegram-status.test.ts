@@ -201,7 +201,7 @@ describe("TelegramStatusSink", () => {
 				toolCallId: "tool-long",
 				toolName: "read",
 				args: {
-					path: "/home/can/Projects/pion/src/providers/some/really/very/deep/nested/file/with/a/long/name/telegram-status.ts",
+					path: "/home/user/Projects/pion/src/providers/some/really/very/deep/nested/file/with/a/long/name/telegram-status.ts",
 				},
 			},
 		});
@@ -251,7 +251,7 @@ describe("TelegramStatusSink", () => {
 				toolCallId: "tool-query",
 				toolName: "session_query",
 				args: {
-					sessionPath: "/home/can/.pion/sessions/telegram-contact-123.jsonl",
+					sessionPath: "/home/user/.pion/sessions/telegram-contact-123.jsonl",
 					question: "what did we decide about auth?",
 				},
 			},

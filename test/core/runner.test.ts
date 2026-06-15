@@ -1100,7 +1100,7 @@ description: Draft text
 					id: "msg-envelope-1",
 					chatId: "chat-1",
 					senderId: "user-1",
-					senderName: "Can",
+					senderName: "Alex",
 					text: "can you inspect this",
 					isGroup: false,
 					provider: "telegram",
@@ -1114,7 +1114,7 @@ description: Draft text
 			);
 
 			expect(materialized.id).toBe("msg-envelope-1");
-			expect(materialized.senderName).toBe("Can");
+			expect(materialized.senderName).toBe("Alex");
 			expect(materialized.text).toBe("can you inspect this");
 			expect(materialized.attachments).toHaveLength(1);
 			expect(materialized.attachments[0]?.kind).toBe("image");

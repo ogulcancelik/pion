@@ -23,11 +23,11 @@ afterEach(() => {
 describe("appendDailyNote", () => {
 	test("creates the daily folder and file with a date header on first write", () => {
 		const now = new Date(2026, 5, 14, 9, 5); // 2026-06-14 09:05 local
-		const file = appendDailyNote(workspace, "Can prefers bun over npm", undefined, now);
+		const file = appendDailyNote(workspace, "User prefers bun over npm", undefined, now);
 
 		expect(file).toBe(join(dailyDir(workspace), "2026-06-14.md"));
 		expect(readFileSync(file, "utf-8")).toBe(
-			"# 2026-06-14\n\n- 09:05 — Can prefers bun over npm\n",
+			"# 2026-06-14\n\n- 09:05 — User prefers bun over npm\n",
 		);
 	});
 

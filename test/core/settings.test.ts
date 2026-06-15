@@ -30,7 +30,7 @@ describe("settings formatting", () => {
 			agentName: "main",
 			model: "minimax/MiniMax-M2.7",
 			isolation: "per-contact",
-			contextKey: "telegram:contact:1181797377",
+			contextKey: "telegram:contact:123456789",
 			contextUsage: {
 				tokens: 52_100,
 				contextWindow: 127_000,
@@ -45,6 +45,6 @@ describe("settings formatting", () => {
 		expect(text).toContain("session: `dm`");
 		expect(text).toContain("scope: `per-contact`");
 		expect(text).toContain("usage: `52k / 127k (41%)`");
-		expect(text).not.toContain("telegram:contact:1181797377");
+		expect(text).not.toContain("telegram:contact:123456789");
 	});
 });
