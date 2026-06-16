@@ -14,6 +14,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
 	type Theme,
@@ -36,69 +37,26 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { loadConfig } from "../config/loader.js";
+import type { Config } from "../config/schema.js";
+import { getAuthPath } from "../core/auth.js";
 import {
 	type MonitorTarget,
 	listMonitorContextsForAgent,
 	resolveDefaultMonitorTarget,
 } from "../core/monitor-target.js";
 import { expandTilde, homeDir } from "../core/paths.js";
+import { parseModelString } from "../core/runner.js";
 import { RuntimeInspectorClient } from "../core/runtime-inspector-ipc.js";
 import type {
 	RuntimeInspectorContextSnapshot,
 	RuntimeInspectorSnapshot,
 } from "../core/runtime-inspector.js";
-
-interface SessionEntry {
-	type: string;
-	id?: string;
-	timestamp?: string;
-	cwd?: string;
-	provider?: string;
-	modelId?: string;
-	thinkingLevel?: string;
-	message?: {
-		role: string;
-		content: Array<{
-			type: string;
-			text?: string;
-			thinking?: string;
-			thinkingSignature?: string;
-			name?: string;
-			id?: string;
-			arguments?: unknown;
-		}>;
-		toolCallId?: string;
-		toolName?: string;
-		isError?: boolean;
-		details?: unknown;
-		api?: string;
-		provider?: string;
-		model?: string;
-		usage?: {
-			input?: number;
-			output?: number;
-			cacheRead?: number;
-			cacheWrite?: number;
-			cost?: { total?: number };
-		};
-		stopReason?: string;
-		timestamp?: number;
-		errorMessage?: string;
-	};
-}
-
-interface SessionStats {
-	totalInput: number;
-	totalOutput: number;
-	totalCacheRead: number;
-	totalCacheWrite: number;
-	totalCost: number;
-	contextTokens: number;
-	contextPercent: number;
-	model: string;
-	thinkingLevel: string;
-	cwd: string;
-}
+import {
+	type SessionEntry,
+	type SessionStats,
+	computeStats,
+	inferModelString,
+} from "./session-stats.js";
 
 initTheme();
 const markdownTheme = getMarkdownTheme();
@@ -145,68 +103,30 @@ function shortenPath(path: string): string {
 	return path;
 }
 
-function computeStats(entries: SessionEntry[]): SessionStats {
-	let totalInput = 0;
-	let totalOutput = 0;
-	let totalCacheRead = 0;
-	let totalCacheWrite = 0;
-	let totalCost = 0;
-	let contextTokens = 0;
-	let model = "unknown";
-	let thinkingLevel = "";
-	let cwd = process.cwd();
+async function resolveContextWindow(
+	config: Config,
+	dataDir: string,
+	modelString: string | undefined,
+): Promise<number | undefined> {
+	if (!modelString) return undefined;
 
-	const sessionHeader = entries.find((entry) => entry.type === "session");
-	if (sessionHeader?.cwd) {
-		cwd = sessionHeader.cwd;
+	try {
+		const authStorage = AuthStorage.create(getAuthPath(config));
+		const modelRegistry = ModelRegistry.create(
+			authStorage,
+			join(dataDir, "agents/main/models.json"),
+		);
+		const [provider, modelId] = parseModelString(modelString);
+		const model = await modelRegistry.find(provider, modelId);
+		const contextWindow = model?.contextWindow;
+		return typeof contextWindow === "number" && contextWindow > 0 ? contextWindow : undefined;
+	} catch {
+		return undefined;
 	}
+}
 
-	for (const entry of entries) {
-		if (entry.type === "thinking_level_change" && entry.thinkingLevel) {
-			thinkingLevel = entry.thinkingLevel;
-		}
-	}
-
-	type MessageUsage = NonNullable<NonNullable<SessionEntry["message"]>["usage"]>;
-	let lastAssistantUsage: MessageUsage | undefined;
-	for (const entry of entries) {
-		if (entry.type === "message" && entry.message?.role === "assistant" && entry.message.usage) {
-			const usage = entry.message.usage;
-			totalInput += usage.input || 0;
-			totalOutput += usage.output || 0;
-			totalCacheRead += usage.cacheRead || 0;
-			totalCacheWrite += usage.cacheWrite || 0;
-			totalCost += usage.cost?.total || 0;
-			lastAssistantUsage = usage;
-			if (entry.message.model) {
-				model = entry.message.model;
-			}
-		}
-	}
-
-	if (lastAssistantUsage) {
-		contextTokens =
-			(lastAssistantUsage.input || 0) +
-			(lastAssistantUsage.output || 0) +
-			(lastAssistantUsage.cacheRead || 0) +
-			(lastAssistantUsage.cacheWrite || 0);
-	}
-
-	const contextWindow = 200000;
-	const contextPercent = contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
-
-	return {
-		totalInput,
-		totalOutput,
-		totalCacheRead,
-		totalCacheWrite,
-		totalCost,
-		contextTokens,
-		contextPercent,
-		model,
-		thinkingLevel,
-		cwd,
-	};
+function agentModelForTarget(config: Config, target: MonitorTarget): string | undefined {
+	return target.agentName ? config.agents[target.agentName]?.model : undefined;
 }
 
 class MessageLog extends Container {
@@ -643,8 +563,7 @@ function createInputHandler(callbacks: {
 	};
 }
 
-function getDataDir(): string {
-	const config = loadConfig();
+function getDataDir(config: Config): string {
 	return config.dataDir ? expandTilde(config.dataDir) : join(homeDir(), ".pion");
 }
 
@@ -707,8 +626,7 @@ async function promptSelect(
 	});
 }
 
-async function resolveMonitorTarget(dataDir: string): Promise<MonitorTarget> {
-	const config = loadConfig();
+async function resolveMonitorTarget(config: Config, dataDir: string): Promise<MonitorTarget> {
 	const args = process.argv.slice(2);
 	const selectFlag = args.includes("-s") || args.includes("--select");
 	const explicitTarget = args.find((arg) => !arg.startsWith("-"));
@@ -788,10 +706,11 @@ async function resolveMonitorTarget(dataDir: string): Promise<MonitorTarget> {
 }
 
 async function main() {
-	const dataDir = getDataDir();
+	const config = loadConfig();
+	const dataDir = getDataDir(config);
 	let target: MonitorTarget;
 	try {
-		target = await resolveMonitorTarget(dataDir);
+		target = await resolveMonitorTarget(config, dataDir);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		if (message === "Selection cancelled") {
@@ -802,7 +721,18 @@ async function main() {
 	}
 
 	let entries = loadSessionEntries(target.sessionFile);
-	let stats = computeStats(entries);
+	const agentModel = agentModelForTarget(config, target);
+	let modelString: string | undefined;
+	let contextWindow: number | undefined;
+	const resolveStatsForEntries = async (nextEntries: SessionEntry[]): Promise<SessionStats> => {
+		const nextModelString = inferModelString(nextEntries, { agentModel });
+		if (nextModelString !== modelString || (nextModelString && !contextWindow)) {
+			modelString = nextModelString;
+			contextWindow = await resolveContextWindow(config, dataDir, modelString);
+		}
+		return computeStats(nextEntries, { contextWindow });
+	};
+	let stats = await resolveStatsForEntries(entries);
 	let hideThinking = true;
 	let expandTools = false;
 	let liveConnected = false;
@@ -855,17 +785,26 @@ async function main() {
 	tui.setFocus(inputHandler);
 	tui.start();
 
+	let refreshInFlight = false;
 	const refreshFromDisk = () => {
+		if (refreshInFlight) return;
 		const signature = existsSync(target.sessionFile)
 			? `${statSync(target.sessionFile).mtimeMs}:${statSync(target.sessionFile).size}`
 			: "missing";
 		if (signature === lastSessionSignature) return;
 		lastSessionSignature = signature;
-		entries = loadSessionEntries(target.sessionFile);
-		stats = computeStats(entries);
-		footer.setStats(stats);
-		messageLog.setEntries(entries);
-		tui.requestRender();
+		refreshInFlight = true;
+		void (async () => {
+			try {
+				entries = loadSessionEntries(target.sessionFile);
+				stats = await resolveStatsForEntries(entries);
+				footer.setStats(stats);
+				messageLog.setEntries(entries);
+				tui.requestRender();
+			} finally {
+				refreshInFlight = false;
+			}
+		})();
 	};
 
 	const applySnapshot = (snapshot: RuntimeInspectorSnapshot) => {
