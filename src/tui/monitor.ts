@@ -129,6 +129,26 @@ function agentModelForTarget(config: Config, target: MonitorTarget): string | un
 	return target.agentName ? config.agents[target.agentName]?.model : undefined;
 }
 
+interface ToolResultInfo {
+	content: Array<{ type: string; text?: string }>;
+	isError: boolean;
+	details?: unknown;
+}
+
+function liveContextSignature(ctx: RuntimeInspectorContextSnapshot | undefined): string {
+	if (!ctx) return "none";
+	const toolSig = ctx.activeTools
+		.map((t) => `${t.toolCallId}:${t.isPartial}:${t.isError}:${!!t.result}:${!!t.partialResult}`)
+		.join(",");
+	const msgLen =
+		ctx.currentAssistantMessage?.content?.reduce((sum, c) => {
+			if (c.type === "text") return sum + (c.text?.length ?? 0);
+			if (c.type === "thinking") return sum + (c.thinking?.length ?? 0);
+			return sum;
+		}, 0) ?? 0;
+	return `${ctx.live}:${ctx.status}:${ctx.pendingMessageCount}:${toolSig}:${msgLen}:${ctx.lastWarning ?? ""}`;
+}
+
 class MessageLog extends Container {
 	private entries: SessionEntry[] = [];
 	private liveContext?: RuntimeInspectorContextSnapshot;
@@ -136,28 +156,45 @@ class MessageLog extends Container {
 	private expandTools = false;
 	private ui: TUI;
 	private cwd: string;
+	private historyContainer = new Container();
+	private liveContainer = new Container();
 	private assistantComponents: AssistantMessageComponent[] = [];
 	private toolComponents: ToolExecutionComponent[] = [];
+	private toolComponentMap = new Map<string, ToolExecutionComponent>();
+	private liveAssistantComponents: AssistantMessageComponent[] = [];
+	private liveToolComponents: ToolExecutionComponent[] = [];
+	private lastLiveSignature = "none";
 
 	constructor(ui: TUI, cwd: string) {
 		super();
 		this.ui = ui;
 		this.cwd = cwd;
+		this.addChild(this.historyContainer);
+		this.addChild(this.liveContainer);
+		this.addChild(new Spacer(4));
 	}
 
 	setEntries(entries: SessionEntry[]): void {
+		if (this.tryAppendEntries(entries)) return;
 		this.entries = entries;
-		this.rebuildContent();
+		this.rebuildHistory();
 	}
 
 	setLiveContext(context: RuntimeInspectorContextSnapshot | undefined): void {
+		const sig = liveContextSignature(context);
+		if (sig === this.lastLiveSignature) return;
+		this.lastLiveSignature = sig;
 		this.liveContext = context;
-		this.rebuildContent();
+		this.rebuildLiveOverlay();
 	}
 
 	setHideThinking(hide: boolean): void {
 		this.hideThinking = hide;
 		for (const component of this.assistantComponents) {
+			component.setHideThinkingBlock(hide);
+			component.invalidate();
+		}
+		for (const component of this.liveAssistantComponents) {
 			component.setHideThinkingBlock(hide);
 			component.invalidate();
 		}
@@ -168,22 +205,67 @@ class MessageLog extends Container {
 		for (const component of this.toolComponents) {
 			component.setExpanded(expand);
 		}
+		for (const component of this.liveToolComponents) {
+			component.setExpanded(expand);
+		}
 	}
 
-	private rebuildContent(): void {
-		this.clear();
+	private tryAppendEntries(entries: SessionEntry[]): boolean {
+		const oldCount = this.entries.length;
+		const newCount = entries.length;
+
+		if (newCount <= oldCount || oldCount === 0) return false;
+
+		if (JSON.stringify(this.entries[0]) !== JSON.stringify(entries[0])) return false;
+		if (JSON.stringify(this.entries[oldCount - 1]) !== JSON.stringify(entries[oldCount - 1]))
+			return false;
+
+		this.entries = entries;
+		this.appendHistory(oldCount);
+		return true;
+	}
+
+	private appendHistory(fromIndex: number): void {
+		const newToolResults = new Map<string, ToolResultInfo>();
+		for (let i = fromIndex; i < this.entries.length; i++) {
+			const entry = this.entries[i];
+			if (!entry) continue;
+			if (
+				entry.type === "message" &&
+				entry.message?.role === "toolResult" &&
+				entry.message.toolCallId
+			) {
+				const result: ToolResultInfo = {
+					content: entry.message.content as Array<{ type: string; text?: string }>,
+					isError: entry.message.isError || false,
+					details: entry.message.details,
+				};
+				newToolResults.set(entry.message.toolCallId, result);
+				const existing = this.toolComponentMap.get(entry.message.toolCallId);
+				if (existing) {
+					existing.updateResult(
+						{ content: result.content, isError: result.isError, details: result.details },
+						false,
+					);
+					existing.invalidate();
+				}
+			}
+		}
+
+		for (let i = fromIndex; i < this.entries.length; i++) {
+			const entry = this.entries[i];
+			if (!entry) continue;
+			this.processEntry(entry, newToolResults);
+		}
+	}
+
+	private rebuildHistory(): void {
+		this.historyContainer.clear();
 		this.assistantComponents = [];
 		this.toolComponents = [];
+		this.toolComponentMap.clear();
 
-		const toolResults = new Map<
-			string,
-			{
-				content: Array<{ type: string; text?: string }>;
-				isError: boolean;
-				details?: unknown;
-			}
-		>();
-
+		const toolResults = new Map<string, ToolResultInfo>();
 		for (const entry of this.entries) {
 			if (
 				entry.type === "message" &&
@@ -199,114 +281,119 @@ class MessageLog extends Container {
 		}
 
 		for (const entry of this.entries) {
-			if (entry.type !== "message" || !entry.message) continue;
-			const { role, content } = entry.message;
-
-			if (role === "user") {
-				const text = this.extractText(content);
-				const cleanText = text.replace(/^\[[\d\-T:.Z]+\s*\|\s*Context:\s*\d+%\]\s*/m, "").trim();
-				if (cleanText) {
-					this.addChild(new UserMessageComponent(cleanText, markdownTheme));
-				}
-			} else if (role === "assistant") {
-				const assistantMessage = this.buildAssistantMessage(entry.message);
-				if (assistantMessage && this.hasVisibleContent(assistantMessage)) {
-					const component = new AssistantMessageComponent(
-						assistantMessage,
-						this.hideThinking,
-						markdownTheme,
-					);
-					this.assistantComponents.push(component);
-					this.addChild(component);
-				}
-
-				for (const tool of content.filter((item) => item.type === "toolCall")) {
-					if (tool.name && tool.id) {
-						const toolComponent = new ToolExecutionComponent(
-							tool.name,
-							tool.id,
-							tool.arguments,
-							{},
-							undefined,
-							this.ui,
-							this.cwd,
-						);
-						toolComponent.setExpanded(this.expandTools);
-
-						const result = toolResults.get(tool.id);
-						if (result) {
-							toolComponent.updateResult(
-								{
-									content: result.content,
-									isError: result.isError,
-									details: result.details,
-								},
-								false,
-							);
-						}
-
-						this.toolComponents.push(toolComponent);
-						this.addChild(toolComponent);
-					}
-				}
-			}
+			this.processEntry(entry, toolResults);
 		}
+	}
 
-		if (this.liveContext && this.shouldShowLiveOverlay(this.liveContext)) {
-			this.addChild(new Spacer(1));
-			this.addChild(new Text(theme.bold(theme.fg("accent", "  Live runtime")), 0, 0));
+	private processEntry(entry: SessionEntry, toolResults: Map<string, ToolResultInfo>): void {
+		if (entry.type !== "message" || !entry.message) return;
+		const { role, content } = entry.message;
 
-			if (this.liveContext.pendingMessageCount > 0) {
-				this.addChild(
-					new Text(
-						theme.fg(
-							"dim",
-							`  buffered: ${this.liveContext.pendingMessageCount} pending message${this.liveContext.pendingMessageCount === 1 ? "" : "s"}`,
-						),
-						0,
-						0,
-					),
-				);
+		if (role === "user") {
+			const text = this.extractText(content);
+			const cleanText = text.replace(/^\[[\d\-T:.Z]+\s*\|\s*Context:\s*\d+%\]\s*/m, "").trim();
+			if (cleanText) {
+				this.historyContainer.addChild(new UserMessageComponent(cleanText, markdownTheme));
 			}
-
-			if (
-				this.liveContext.currentAssistantMessage &&
-				this.hasVisibleContent(this.liveContext.currentAssistantMessage)
-			) {
+		} else if (role === "assistant") {
+			const assistantMessage = this.buildAssistantMessage(entry.message);
+			if (assistantMessage && this.hasVisibleContent(assistantMessage)) {
 				const component = new AssistantMessageComponent(
-					this.liveContext.currentAssistantMessage,
+					assistantMessage,
 					this.hideThinking,
 					markdownTheme,
 				);
 				this.assistantComponents.push(component);
-				this.addChild(component);
+				this.historyContainer.addChild(component);
 			}
 
-			for (const tool of this.liveContext.activeTools) {
-				const toolComponent = new ToolExecutionComponent(
-					tool.toolName,
-					tool.toolCallId,
-					tool.args,
-					{},
-					undefined,
-					this.ui,
-					this.cwd,
-				);
-				toolComponent.markExecutionStarted();
-				toolComponent.setArgsComplete();
-				toolComponent.setExpanded(this.expandTools);
-				if (tool.partialResult) {
-					toolComponent.updateResult(tool.partialResult, true);
+			for (const tool of content.filter((item) => item.type === "toolCall")) {
+				if (tool.name && tool.id) {
+					const toolComponent = new ToolExecutionComponent(
+						tool.name,
+						tool.id,
+						tool.arguments,
+						{},
+						undefined,
+						this.ui,
+						this.cwd,
+					);
+					toolComponent.setExpanded(this.expandTools);
+
+					const result = toolResults.get(tool.id);
+					if (result) {
+						toolComponent.updateResult(
+							{ content: result.content, isError: result.isError, details: result.details },
+							false,
+						);
+					}
+
+					this.toolComponents.push(toolComponent);
+					this.toolComponentMap.set(tool.id, toolComponent);
+					this.historyContainer.addChild(toolComponent);
 				}
-				if (tool.result) {
-					toolComponent.updateResult(tool.result, false);
-				}
-				this.toolComponents.push(toolComponent);
-				this.addChild(toolComponent);
 			}
 		}
+	}
 
-		this.addChild(new Spacer(4));
+	private rebuildLiveOverlay(): void {
+		this.liveContainer.clear();
+		this.liveAssistantComponents = [];
+		this.liveToolComponents = [];
+
+		if (!this.liveContext || !this.shouldShowLiveOverlay(this.liveContext)) return;
+
+		this.liveContainer.addChild(new Spacer(1));
+		this.liveContainer.addChild(new Text(theme.bold(theme.fg("accent", "  Live runtime")), 0, 0));
+
+		if (this.liveContext.pendingMessageCount > 0) {
+			this.liveContainer.addChild(
+				new Text(
+					theme.fg(
+						"dim",
+						`  buffered: ${this.liveContext.pendingMessageCount} pending message${this.liveContext.pendingMessageCount === 1 ? "" : "s"}`,
+					),
+					0,
+					0,
+				),
+			);
+		}
+
+		if (
+			this.liveContext.currentAssistantMessage &&
+			this.hasVisibleContent(this.liveContext.currentAssistantMessage)
+		) {
+			const component = new AssistantMessageComponent(
+				this.liveContext.currentAssistantMessage,
+				this.hideThinking,
+				markdownTheme,
+			);
+			this.liveAssistantComponents.push(component);
+			this.liveContainer.addChild(component);
+		}
+
+		for (const tool of this.liveContext.activeTools) {
+			const toolComponent = new ToolExecutionComponent(
+				tool.toolName,
+				tool.toolCallId,
+				tool.args,
+				{},
+				undefined,
+				this.ui,
+				this.cwd,
+			);
+			toolComponent.markExecutionStarted();
+			toolComponent.setArgsComplete();
+			toolComponent.setExpanded(this.expandTools);
+			if (tool.partialResult) {
+				toolComponent.updateResult(tool.partialResult, true);
+			}
+			if (tool.result) {
+				toolComponent.updateResult(tool.result, false);
+			}
+			this.liveToolComponents.push(toolComponent);
+			this.liveContainer.addChild(toolComponent);
+		}
 	}
 
 	private shouldShowLiveOverlay(context: RuntimeInspectorContextSnapshot): boolean {
@@ -744,6 +831,7 @@ async function main() {
 
 	const terminal = new ProcessTerminal();
 	const tui = new TUI(terminal);
+	tui.setClearOnShrink(false);
 	const header = new Text(theme.bold(theme.fg("accent", `  📋 ${target.sessionName}`)), 0, 0);
 	const summary = new RuntimeSummaryComponent();
 	const messageLog = new MessageLog(tui, stats.cwd);
@@ -751,7 +839,6 @@ async function main() {
 	footer.setStats(stats);
 
 	messageLog.setEntries(entries);
-	messageLog.setLiveContext(undefined);
 	summary.setState(target.sessionName, false, undefined);
 
 	const inputHandler = createInputHandler({
@@ -808,15 +895,21 @@ async function main() {
 	};
 
 	const applySnapshot = (snapshot: RuntimeInspectorSnapshot) => {
+		const wasConnected = liveConnected;
 		liveConnected = true;
 		if (!liveContextKey) {
 			liveContextKey = snapshot.contexts.find(
 				(context) => context.sessionFile === target.sessionFile,
 			)?.contextKey;
 		}
-		liveContext = liveContextKey
+		const nextLiveContext = liveContextKey
 			? snapshot.contexts.find((context) => context.contextKey === liveContextKey)
 			: undefined;
+
+		const ctxChanged = liveContextSignature(nextLiveContext) !== liveContextSignature(liveContext);
+		if (!ctxChanged && wasConnected) return;
+
+		liveContext = nextLiveContext;
 		summary.setState(target.sessionName, liveConnected, liveContext);
 		messageLog.setLiveContext(liveContext);
 		tui.requestRender();
