@@ -75,6 +75,7 @@ export class CronJobStore {
 	readonly cronDir: string;
 	readonly jobsFile: string;
 	readonly outputDir: string;
+	private cachedJobs: CronJob[] | null = null;
 
 	constructor({ dataDir }: { dataDir: string }) {
 		this.cronDir = join(dataDir, "cron");
@@ -87,7 +88,7 @@ export class CronJobStore {
 	}
 
 	listJobs(): CronJob[] {
-		return this.readJobs();
+		return [...this.readJobs()];
 	}
 
 	getJob(id: string): CronJob | undefined {
@@ -284,11 +285,15 @@ export class CronJobStore {
 	}
 
 	private readJobs(): CronJob[] {
+		if (this.cachedJobs) return this.cachedJobs;
 		const raw = JSON.parse(readFileSync(this.jobsFile, "utf-8")) as PersistedCronJobs;
-		return Array.isArray(raw.jobs) ? raw.jobs : [];
+		const jobs = Array.isArray(raw.jobs) ? raw.jobs : [];
+		this.cachedJobs = jobs;
+		return jobs;
 	}
 
 	private writeJobs(jobs: CronJob[]): void {
+		this.cachedJobs = jobs;
 		const tempFile = `${this.jobsFile}.tmp`;
 		writeFileSync(tempFile, `${JSON.stringify({ version: 1, jobs }, null, "\t")}\n`, "utf-8");
 		renameSync(tempFile, this.jobsFile);

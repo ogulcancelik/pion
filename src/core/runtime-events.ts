@@ -156,6 +156,9 @@ export function createMessageReceivedRuntimeEvent(
 export class RuntimeEventBus {
 	private listeners = new Set<RuntimeEventListener>();
 	private runtimeEventsDir: string;
+	private writeBuffers = new Map<string, string[]>();
+	private flushTimer: ReturnType<typeof setTimeout> | null = null;
+	private readonly flushIntervalMs = 250;
 
 	constructor(dataDir: string) {
 		this.runtimeEventsDir = join(dataDir, "runtime-events");
@@ -176,10 +179,16 @@ export class RuntimeEventBus {
 			timestamp: event.timestamp ?? new Date().toISOString(),
 		} as RuntimeEvent;
 
-		appendFileSync(
-			this.getEventLogFile(stampedEvent.contextKey),
-			`${JSON.stringify(stampedEvent)}\n`,
-		);
+		const line = `${JSON.stringify(stampedEvent)}\n`;
+		const fileKey = stampedEvent.contextKey;
+		let buffer = this.writeBuffers.get(fileKey);
+		if (!buffer) {
+			buffer = [];
+			this.writeBuffers.set(fileKey, buffer);
+		}
+		buffer.push(line);
+
+		this.scheduleFlush();
 
 		for (const listener of this.listeners) {
 			listener(stampedEvent);
@@ -188,8 +197,44 @@ export class RuntimeEventBus {
 		return stampedEvent;
 	}
 
-	/** Lifecycle hook retained for the daemon; nothing to flush without the sqlite index. */
-	close(): void {}
+	private scheduleFlush(): void {
+		if (this.flushTimer) return;
+		this.flushTimer = setTimeout(() => {
+			this.flushTimer = null;
+			this.flushAll();
+		}, this.flushIntervalMs);
+	}
+
+	private flushAll(): void {
+		if (this.flushTimer) {
+			clearTimeout(this.flushTimer);
+			this.flushTimer = null;
+		}
+
+		for (const [contextKey, lines] of this.writeBuffers) {
+			if (lines.length === 0) {
+				this.writeBuffers.delete(contextKey);
+				continue;
+			}
+			const filePath = this.getEventLogFile(contextKey);
+			try {
+				appendFileSync(filePath, lines.join(""));
+			} catch (err) {
+				console.error(`[runtime-events] Failed to flush events for ${contextKey}:`, err);
+			}
+			this.writeBuffers.delete(contextKey);
+		}
+	}
+
+	/** Flush remaining buffered events synchronously. Public for tests and shutdown. */
+	flush(): void {
+		this.flushAll();
+	}
+
+	/** Lifecycle hook — flush remaining buffered events synchronously on shutdown. */
+	close(): void {
+		this.flush();
+	}
 
 	getEventLogFile(contextKey: string): string {
 		return join(this.runtimeEventsDir, `${sanitizeContextKey(contextKey)}.jsonl`);

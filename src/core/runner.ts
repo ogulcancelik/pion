@@ -1,4 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readFileSync,
+	readSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -702,21 +712,9 @@ export class Runner {
 			writeFileSync(sessionFile, `${JSON.stringify(sessionEntry)}\n`, "utf-8");
 		}
 
-		const content = readFileSync(sessionFile, "utf-8");
-		const lastMessageId = content
-			.split("\n")
-			.map((line) => line.trim())
-			.filter(Boolean)
-			.map((line) => {
-				try {
-					return JSON.parse(line) as { type?: string; id?: string };
-				} catch {
-					return null;
-				}
-			})
-			.filter((entry): entry is { type?: string; id?: string } => entry !== null)
-			.filter((entry) => entry.type === "message" && typeof entry.id === "string")
-			.at(-1)?.id;
+		// Read only the tail of the file to find the last message ID,
+		// instead of parsing the entire session.
+		const lastMessageId = this.findLastMessageId(sessionFile);
 
 		const messageEntry = {
 			type: "message",
@@ -748,6 +746,38 @@ export class Runner {
 			encoding: "utf-8",
 			flag: "a",
 		});
+	}
+
+	/**
+	 * Read the last few KB of a session file and extract the last message entry's ID.
+	 * Avoids parsing the entire file for a simple append.
+	 */
+	private findLastMessageId(sessionFile: string): string | undefined {
+		const stat = statSync(sessionFile);
+		const tailSize = Math.min(stat.size, 8192);
+		if (tailSize === 0) return undefined;
+
+		const fd = openSync(sessionFile, "r");
+		try {
+			const buffer = Buffer.alloc(tailSize);
+			readSync(fd, buffer, 0, tailSize, stat.size - tailSize);
+			const lines = buffer.toString("utf-8").split("\n").filter(Boolean);
+			for (let i = lines.length - 1; i >= 0; i--) {
+				const line = lines[i];
+				if (!line) continue;
+				try {
+					const entry = JSON.parse(line) as { type?: string; id?: string };
+					if (entry.type === "message" && typeof entry.id === "string") {
+						return entry.id;
+					}
+				} catch {
+					// Partial line at the start of the tail — skip.
+				}
+			}
+			return undefined;
+		} finally {
+			closeSync(fd);
+		}
 	}
 
 	/**

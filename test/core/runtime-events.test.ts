@@ -33,6 +33,8 @@ describe("RuntimeEventBus", () => {
 			expect(emitted.timestamp).toBeString();
 			expect(received).toEqual([emitted]);
 
+			bus.flush();
+
 			const persisted = readFileSync(bus.getEventLogFile("telegram:contact:123"), "utf-8")
 				.trim()
 				.split("\n")

@@ -45,6 +45,9 @@ function defaultState(): PersistedDaemonState {
 export class DaemonRuntimeState {
 	readonly runtimeDir: string;
 	readonly stateFile: string;
+	private cachedState: PersistedDaemonState | undefined;
+	private writeTimer: ReturnType<typeof setTimeout> | null = null;
+	private readonly writeDebounceMs = 500;
 
 	constructor(dataDir: string) {
 		this.runtimeDir = join(dataDir, "runtime");
@@ -58,7 +61,8 @@ export class DaemonRuntimeState {
 
 		const nextState = defaultState();
 		nextState.lastFatalError = previousState?.lastFatalError;
-		this.writeState(nextState);
+		this.cachedState = nextState;
+		this.writeStateSync(nextState);
 
 		return { recovered, interruptedContexts, previousState };
 	}
@@ -69,32 +73,62 @@ export class DaemonRuntimeState {
 		state.lastShutdownAt = nowIso();
 		state.lastHeartbeatAt = state.lastShutdownAt;
 		state.activeContexts = [];
-		this.writeState(state);
+		this.cachedState = state;
+		this.flushWrite();
 	}
 
 	trackContextStart(snapshot: ActiveContextSnapshot): void {
-		const state = this.readState() ?? defaultState();
+		const state = this.getState();
 		state.cleanShutdown = false;
 		state.lastHeartbeatAt = nowIso();
 		state.activeContexts = [
 			...state.activeContexts.filter((ctx) => ctx.contextKey !== snapshot.contextKey),
 			snapshot,
 		];
-		this.writeState(state);
+		this.scheduleWrite();
 	}
 
 	trackContextFinish(contextKey: string): void {
-		const state = this.readState() ?? defaultState();
+		const state = this.getState();
 		state.lastHeartbeatAt = nowIso();
 		state.activeContexts = state.activeContexts.filter((ctx) => ctx.contextKey !== contextKey);
-		this.writeState(state);
+		this.scheduleWrite();
 	}
 
 	recordFatalError(error: unknown): void {
-		const state = this.readState() ?? defaultState();
+		const state = this.getState();
 		state.lastHeartbeatAt = nowIso();
 		state.lastFatalError = this.formatError(error);
-		this.writeState(state);
+		this.scheduleWrite();
+	}
+
+	private getState(): PersistedDaemonState {
+		if (this.cachedState) return this.cachedState;
+		this.cachedState = this.readState() ?? defaultState();
+		return this.cachedState;
+	}
+
+	private scheduleWrite(): void {
+		if (this.writeTimer) return;
+		this.writeTimer = setTimeout(() => {
+			this.writeTimer = null;
+			this.flushWrite();
+		}, this.writeDebounceMs);
+	}
+
+	/** Flush any pending debounced write synchronously. Public for tests and shutdown. */
+	flush(): void {
+		this.flushWrite();
+	}
+
+	private flushWrite(): void {
+		if (this.writeTimer) {
+			clearTimeout(this.writeTimer);
+			this.writeTimer = null;
+		}
+		if (this.cachedState) {
+			this.writeStateSync(this.cachedState);
+		}
 	}
 
 	private ensureRuntimeDir(): void {
@@ -104,6 +138,7 @@ export class DaemonRuntimeState {
 	}
 
 	private readState(): PersistedDaemonState | undefined {
+		if (this.cachedState) return this.cachedState;
 		if (!existsSync(this.stateFile)) {
 			return undefined;
 		}
@@ -128,7 +163,7 @@ export class DaemonRuntimeState {
 		}
 	}
 
-	private writeState(state: PersistedDaemonState): void {
+	private writeStateSync(state: PersistedDaemonState): void {
 		this.ensureRuntimeDir();
 		writeFileSync(this.stateFile, `${JSON.stringify(state, null, "\t")}\n`, "utf-8");
 	}

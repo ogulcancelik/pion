@@ -94,6 +94,8 @@ class Daemon {
 			provider: Provider;
 		}
 	>();
+	/** Cached skill names for cron tool creation */
+	private cachedSkillNames: string[] | null = null;
 
 	constructor(config: Config) {
 		this.config = config;
@@ -729,6 +731,12 @@ class Daemon {
 		} finally {
 			if (typingInterval) clearInterval(typingInterval);
 			this.processingContexts.delete(contextKey);
+			// Clean up generation entry only if this run was still current
+			// (not superseded). A superseded run leaves the entry for the
+			// newer run to manage.
+			if (this.isCurrentGeneration(contextKey, gen)) {
+				this.contextGeneration.delete(contextKey);
+			}
 			this.runtimeState.trackContextFinish(contextKey);
 		}
 	}
@@ -752,6 +760,10 @@ class Daemon {
 			});
 			this.nextGeneration(contextKey);
 			await this.runner.abort(contextKey).catch(() => {});
+			// These supersede paths (/stop, /new, /compact, /restart) don't
+			// start a new processMessages run that would own the bumped
+			// generation, so clean it up to avoid leaking the map entry.
+			this.contextGeneration.delete(contextKey);
 		}
 		return wasBusy;
 	}
@@ -954,10 +966,12 @@ class Daemon {
 	}
 
 	private getAvailableSkillNames(): string[] {
+		if (this.cachedSkillNames) return this.cachedSkillNames;
 		const skillsDir = this.config.skillsDir
 			? expandTilde(this.config.skillsDir)
 			: join(homeDir(), ".pion/skills");
-		return loadSkills(skillsDir).skills.map((skill) => skill.name);
+		this.cachedSkillNames = loadSkills(skillsDir).skills.map((skill) => skill.name);
+		return this.cachedSkillNames;
 	}
 
 	private async notifyRecoveryTargets(): Promise<void> {
@@ -996,6 +1010,8 @@ class Daemon {
 
 	recordFatalError(error: unknown): void {
 		this.runtimeState.recordFatalError(error);
+		this.runtimeState.flush();
+		this.runtimeEvents.flush();
 	}
 
 	async stop(): Promise<void> {

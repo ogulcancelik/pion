@@ -57,6 +57,7 @@ describe("DaemonRuntimeState", () => {
 					chatId: "abc",
 				}),
 			);
+			firstRun.flush();
 
 			const secondRun = new DaemonRuntimeState(dataDir);
 			const recovery = secondRun.markStartup();
@@ -80,11 +81,13 @@ describe("DaemonRuntimeState", () => {
 			state.markStartup();
 			state.trackContextStart(makeContext());
 
+			state.flush();
 			let persisted = JSON.parse(readFileSync(state.stateFile, "utf-8"));
 			expect(persisted.activeContexts).toHaveLength(1);
 			expect(persisted.activeContexts[0].messagePreview).toBe("hello there");
 
 			state.trackContextFinish("telegram:contact:123");
+			state.flush();
 
 			persisted = JSON.parse(readFileSync(state.stateFile, "utf-8"));
 			expect(persisted.activeContexts).toEqual([]);
@@ -99,6 +102,7 @@ describe("DaemonRuntimeState", () => {
 			const state = new DaemonRuntimeState(dataDir);
 			state.markStartup();
 			state.recordFatalError(new Error("boom"));
+			state.flush();
 
 			const persisted = JSON.parse(readFileSync(state.stateFile, "utf-8"));
 			expect(persisted.lastFatalError).toContain("boom");
