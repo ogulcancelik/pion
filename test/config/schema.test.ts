@@ -183,6 +183,53 @@ describe("validateConfig", () => {
 		);
 	});
 
+	test("accepts supported agent engines", () => {
+		for (const engine of ["pi", "claude"]) {
+			const errors = validateConfig({
+				agents: {
+					main: {
+						model: "x",
+						systemPrompt: "y",
+						workspace: "/tmp/pion/agents/main",
+						engine,
+					},
+				},
+				routes: [],
+			});
+			expect(errors).toHaveLength(0);
+		}
+	});
+
+	test("rejects invalid agent engine", () => {
+		const errors = validateConfig({
+			agents: {
+				main: {
+					model: "x",
+					systemPrompt: "y",
+					workspace: "/tmp/pion/agents/main",
+					engine: "codex",
+				},
+			},
+			routes: [],
+		});
+		expect(errors).toContain("agents.main.engine must be one of: pi, claude");
+	});
+
+	test("rejects invalid cron agent engine", () => {
+		const errors = validateConfig({
+			cron: {
+				agent: {
+					model: "anthropic/claude-haiku-4-5",
+					workspace: "/tmp/pion/agents/cron",
+					engine: "codex",
+				},
+			},
+			agents: { main: { model: "x", systemPrompt: "y" } },
+			routes: [],
+		});
+		expect(errors).toContain("cron.agent.engine must be one of: pi, claude");
+	});
+
 	test("rejects non-string agent cwd override", () => {
 		const errors = validateConfig({
 			agents: {

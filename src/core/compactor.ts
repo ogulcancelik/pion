@@ -203,6 +203,22 @@ export function shouldAutoCompact(
 	);
 }
 
+/**
+ * Generate a compaction handoff through an engine session's own prompt path.
+ * Shared by both engines so the handoff contract stays identical.
+ */
+export async function generateSessionHandoff(
+	prompt: (text: string, options: { isCancelled?: () => boolean }) => Promise<string>,
+	options: HandoffPromptOptions & { isCancelled?: () => boolean } = {},
+): Promise<string> {
+	const response = await prompt(buildHandoffPrompt(options), { isCancelled: options.isCancelled });
+	const handoff = extractHandoffBlock(response);
+	if (!handoff) {
+		throw new Error("Compaction handoff did not include a valid delimited block");
+	}
+	return handoff;
+}
+
 export function buildHandoffPrompt(options: HandoffPromptOptions = {}): string {
 	const sections = [
 		"[SYSTEM] Context is nearly full. We are handing this conversation off to a fresh session.",

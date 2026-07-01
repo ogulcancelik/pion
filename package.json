@@ -18,10 +18,12 @@
     "monitor": "bun run src/tui/monitor.ts"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.198",
     "@earendil-works/pi-agent-core": "0.74.0",
     "@earendil-works/pi-ai": "0.74.0",
     "@earendil-works/pi-coding-agent": "0.74.0",
     "@earendil-works/pi-tui": "0.74.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@sinclair/typebox": "0.34.41",
     "grammy": "1.39.2",
     "markdown-it": "14.1.0",

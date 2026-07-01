@@ -35,6 +35,15 @@ export interface EnsureDefaultPackagesOptions {
 	log?: (message: string) => void;
 }
 
+/** Standard pi package manager wiring for pion's data dir. */
+export function createPionPackageManager(cwd: string, agentDir: string): PackageManager {
+	return new DefaultPackageManager({
+		cwd,
+		agentDir,
+		settingsManager: SettingsManager.create(cwd, agentDir),
+	});
+}
+
 /**
  * Install any missing default packages and persist them to settings so the
  * resource loader discovers them. Best-effort: a failure (e.g. offline) for one
@@ -46,13 +55,7 @@ export async function ensureDefaultPackages(
 	options: EnsureDefaultPackagesOptions = {},
 ): Promise<void> {
 	const packages = options.packages ?? DEFAULT_PACKAGES;
-	const packageManager =
-		options.packageManager ??
-		new DefaultPackageManager({
-			cwd,
-			agentDir,
-			settingsManager: SettingsManager.create(cwd, agentDir),
-		});
+	const packageManager = options.packageManager ?? createPionPackageManager(cwd, agentDir);
 
 	for (const source of packages) {
 		if (packageManager.getInstalledPath(source, "user")) {

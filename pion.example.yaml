@@ -61,6 +61,14 @@ cron:
 
 agents:
   main:
+    # Agent backbone (default: pi).
+    # pi     = pi agent loop against a raw model API (needs provider auth in auth.json)
+    # claude = delegate turns to Claude Code via the Agent SDK. Uses your local
+    #          `claude` login/subscription. Claude Code's own tools run the turn;
+    #          Pion tools (telegram, cron, remember) are bridged in via MCP.
+    #          Built-in WebSearch is disabled; the shared web-browse skill is
+    #          exposed instead. Model is a Claude model id, e.g. claude-opus-4-8.
+    # engine: claude
     model: anthropic/claude-sonnet-4-20250514
     # Optional model thinking level.
     # Supported: off, minimal, low, medium, high, xhigh

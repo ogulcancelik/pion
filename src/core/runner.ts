@@ -29,11 +29,9 @@ import type { AgentConfig } from "../config/schema.js";
 import type { Message } from "../providers/types.js";
 import { AgentProfileStore } from "./agent-profiles.js";
 import { getAuthPath } from "./auth.js";
-import {
-	buildContinuationSeedPrompt,
-	buildHandoffPrompt,
-	extractHandoffBlock,
-} from "./compactor.js";
+import { ensureClaudePlugin } from "./claude-plugin.js";
+import { ClaudeSession } from "./claude-session.js";
+import { buildContinuationSeedPrompt, generateSessionHandoff } from "./compactor.js";
 import { DEFAULT_PACKAGES } from "./default-packages.js";
 import { DEFAULT_SKILLS } from "./default-skills.js";
 import { prepareInboundMessage } from "./inbound.js";
@@ -86,6 +84,8 @@ export function filterConfiguredSkills(
 export interface RunnerConfig {
 	/** Base data directory (default: ~/.pion). Also the pi agent dir for resource discovery. */
 	dataDir?: string;
+	/** Skills directory override (default: <dataDir>/skills). Shared with the claude engine. */
+	skillsDir?: string;
 	/** Path to auth storage (default: ~/.pion/auth.json) */
 	authPath?: string;
 	/** Default timeout for bash tool calls in seconds. */
@@ -140,6 +140,15 @@ interface WarningState {
 	warned95: boolean;
 	/** Highest 20% context-usage mark already cued (0 = none yet). */
 	lastCheckpointMark: number;
+}
+
+/** Timestamp + context-percent prefix prepended to every user turn, on both engines. */
+export function buildTurnPrefix(usage: ContextUsageSnapshot | null): string {
+	let prefix = `[${new Date().toISOString()}`;
+	if (usage && usage.percent !== null) {
+		prefix += ` | Context: ${Math.round(usage.percent)}%`;
+	}
+	return `${prefix}]\n\n`;
 }
 
 export function parseModelString(modelString: string): [string, string] {
@@ -361,12 +370,31 @@ export function loadToolEnvFile(envFilePath?: string): Record<string, string> {
 }
 
 /**
- * Runner manages pi-agent sessions and processes messages.
+ * Common surface both engine sessions (pi and claude) expose to the Runner.
+ */
+export interface EngineSession {
+	readonly isStreaming: boolean;
+	initialize?(): Promise<void>;
+	prompt(
+		text: string,
+		images?: Array<{ type: "image"; data: string; mimeType: string }>,
+		options?: RunnerProcessOptions,
+	): Promise<string>;
+	getContextUsage(): ContextUsageSnapshot | null;
+	generateHandoff(options?: CompactSessionOptions): Promise<string>;
+	abort(): Promise<void>;
+	/** Mid-response steering; only the pi engine supports it. */
+	steer?(text: string): Promise<void>;
+}
+
+/**
+ * Runner manages agent sessions and processes messages.
  *
  * Each unique contextKey gets its own session (conversation history).
  */
 export class Runner {
 	private dataDir: string;
+	private skillsDir?: string;
 	private authStorage: AuthStorage;
 	private modelRegistry: ModelRegistry;
 	private runtimeEventBus: RuntimeEventBus;
@@ -374,12 +402,15 @@ export class Runner {
 	private subagentPiBin: string;
 	private toolEnv: Record<string, string>;
 	private agentProfiles: AgentProfileStore;
-	private sessions: Map<string, RunnerSession> = new Map();
+	private sessions: Map<string, EngineSession> = new Map();
 	private warningState: Map<string, WarningState> = new Map();
+	/** Lazily built shared-skills plugin dir for claude-engine sessions. */
+	private claudePluginPath: string | undefined | null = null;
 
 	constructor(config: RunnerConfig = {}) {
 		const home = homeDir();
 		this.dataDir = config.dataDir ? expandTilde(config.dataDir) : join(home, ".pion");
+		this.skillsDir = config.skillsDir ? expandTilde(config.skillsDir) : undefined;
 		const authPath = getAuthPath(config);
 
 		// Ensure data directory exists
@@ -432,7 +463,7 @@ export class Runner {
 	/**
 	 * Check context usage and return any warnings.
 	 */
-	private checkContextWarnings(contextKey: string, session: RunnerSession): string[] {
+	private checkContextWarnings(contextKey: string, session: EngineSession): string[] {
 		const warnings: string[] = [];
 		const usage = session.getContextUsage();
 		if (!usage || usage.percent === null) return warnings;
@@ -524,23 +555,40 @@ export class Runner {
 		return { archivedSessionFile, handoff };
 	}
 
-	private async ensureSession(context: RunnerContext): Promise<RunnerSession> {
+	private async ensureSession(context: RunnerContext): Promise<EngineSession> {
 		let session = this.sessions.get(context.contextKey);
 		if (!session) {
 			session = await this.createSession(context);
 			this.sessions.set(context.contextKey, session);
 		}
-		if (typeof (session as { initialize?: () => Promise<void> }).initialize === "function") {
-			await (session as { initialize: () => Promise<void> }).initialize();
-		}
+		await session.initialize?.();
 		return session;
 	}
 
-	private async createSession(context: RunnerContext): Promise<RunnerSession> {
-		// Build session file path from context key
-		// telegram:contact:123 → sessions/telegram-contact-123.jsonl
-		const safeKey = context.contextKey.replace(/[:/\\]/g, "-");
-		const sessionFile = join(this.dataDir, "sessions", `${safeKey}.jsonl`);
+	private createSession(context: RunnerContext): EngineSession {
+		const sessionFile = this.getSessionFile(context.contextKey);
+
+		if (context.agentConfig.engine === "claude") {
+			// `remember` is the only runner-owned tool that carries over; subagent
+			// and profile tools are pi-specific (Claude Code brings its own Task
+			// tool), and bash/read/edit are Claude Code natives.
+			const memoryTools: ToolDefinition[] = context.agentConfig.workspace
+				? [
+						createRememberTool({
+							workspacePath: context.agentConfig.workspace,
+						}) as ToolDefinition,
+					]
+				: [];
+			return new ClaudeSession({
+				agentConfig: context.agentConfig,
+				contextKey: context.contextKey,
+				sessionFile,
+				runtimeEventBus: this.runtimeEventBus,
+				toolEnv: this.toolEnv,
+				customTools: [...(context.customTools ?? []), ...memoryTools],
+				pluginPath: this.ensureClaudePluginPath(),
+			});
+		}
 
 		return new RunnerSession({
 			agentConfig: context.agentConfig,
@@ -555,6 +603,23 @@ export class Runner {
 			toolEnv: this.toolEnv,
 			customTools: context.customTools,
 		});
+	}
+
+	/** Build the shared-skills plugin once per daemon run; undefined when empty. */
+	private ensureClaudePluginPath(): string | undefined {
+		if (this.claudePluginPath === null) {
+			try {
+				this.claudePluginPath = ensureClaudePlugin({
+					dataDir: this.dataDir,
+					skillsDir: this.skillsDir,
+					log: (message) => console.log(message),
+				});
+			} catch (error) {
+				console.error("[runner] Failed to build claude skills plugin:", error);
+				this.claudePluginPath = undefined;
+			}
+		}
+		return this.claudePluginPath;
 	}
 
 	/**
@@ -801,7 +866,7 @@ export class Runner {
 	 */
 	async steer(contextKey: string, text: string): Promise<boolean> {
 		const session = this.sessions.get(contextKey);
-		if (!session || !session.isStreaming) {
+		if (!session || !session.isStreaming || !session.steer) {
 			return false;
 		}
 
@@ -881,18 +946,8 @@ class RunnerSession {
 			throw new Error("Session not initialized");
 		}
 
-		// Add timestamp prefix like normal prompts
-		const now = new Date().toISOString();
-		let messagePrefix = `[${now}`;
-		const usage = this.agentSession.getContextUsage();
-		if (usage && usage.percent !== null) {
-			const pct = Math.round(usage.percent);
-			messagePrefix += ` | Context: ${pct}%`;
-		}
-		messagePrefix += "]\n\n";
-
 		// Use pi-agent's steering - injects after current tool
-		await this.agentSession.prompt(messagePrefix + text, {
+		await this.agentSession.prompt(buildTurnPrefix(this.getContextUsage()) + text, {
 			streamingBehavior: "steer",
 		});
 	}
@@ -912,14 +967,10 @@ class RunnerSession {
 	}
 
 	async generateHandoff(options: CompactSessionOptions = {}): Promise<string> {
-		const response = await this.prompt(buildHandoffPrompt(options), undefined, {
-			isCancelled: options.isCancelled,
-		});
-		const handoff = extractHandoffBlock(response);
-		if (!handoff) {
-			throw new Error("Compaction handoff did not include a valid delimited block");
-		}
-		return handoff;
+		return generateSessionHandoff(
+			(text, promptOptions) => this.prompt(text, undefined, promptOptions),
+			options,
+		);
 	}
 
 	async prompt(
@@ -966,16 +1017,7 @@ class RunnerSession {
 		try {
 			await this.agentSession.reload();
 			const freshSystemPrompt = this.agentSession.agent.state.systemPrompt;
-
-			const now = new Date().toISOString();
-			let messagePrefix = `[${now}`;
-
-			const usage = this.agentSession.getContextUsage();
-			if (usage && usage.percent !== null) {
-				const pct = Math.round(usage.percent);
-				messagePrefix += ` | Context: ${pct}%`;
-			}
-			messagePrefix += "]\n\n";
+			const messagePrefix = buildTurnPrefix(this.getContextUsage());
 
 			try {
 				await this.agentSession.prompt(messagePrefix + text, images ? { images } : undefined);

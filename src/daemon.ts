@@ -121,6 +121,7 @@ class Daemon {
 		this.agentProfiles = new AgentProfileStore(join(dataDir, "agent-profiles.json"));
 		this.runner = new Runner({
 			dataDir: config.dataDir,
+			skillsDir: config.skillsDir,
 			authPath: config.authPath,
 			bashTimeoutSec: config.bashTimeoutSec,
 			toolEnvFile: config.toolEnvFile,

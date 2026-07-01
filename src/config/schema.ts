@@ -39,11 +39,17 @@ export interface CronConfig {
 
 export type TelegramStatusMode = "clear" | "keep" | "off";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type AgentEngine = "pi" | "claude";
 
 const THINKING_LEVELS: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const AGENT_ENGINES: AgentEngine[] = ["pi", "claude"];
 
 function isThinkingLevel(value: unknown): value is ThinkingLevel {
 	return typeof value === "string" && THINKING_LEVELS.includes(value as ThinkingLevel);
+}
+
+function isAgentEngine(value: unknown): value is AgentEngine {
+	return typeof value === "string" && AGENT_ENGINES.includes(value as AgentEngine);
 }
 
 export interface TelegramConfig {
@@ -60,6 +66,10 @@ export interface TelegramConfig {
 }
 
 export interface AgentConfig {
+	/** Agent backbone. "pi" (default) runs the pi agent loop against a raw model
+	 *  API. "claude" delegates the whole turn to Claude Code via the Agent SDK —
+	 *  no pi loop, tools, or model registry are involved for that agent. */
+	engine?: AgentEngine;
 	model: string;
 	/** Path to agent workspace containing SOUL.md, IDENTITY.md, etc. */
 	workspace: string;
@@ -194,6 +204,9 @@ export function validateConfig(config: unknown): string[] {
 					if (agent.thinkingLevel !== undefined && !isThinkingLevel(agent.thinkingLevel)) {
 						errors.push(`cron.agent.thinkingLevel must be one of: ${THINKING_LEVELS.join(", ")}`);
 					}
+					if (agent.engine !== undefined && !isAgentEngine(agent.engine)) {
+						errors.push(`cron.agent.engine must be one of: ${AGENT_ENGINES.join(", ")}`);
+					}
 				}
 			}
 		}
@@ -212,6 +225,9 @@ export function validateConfig(config: unknown): string[] {
 				errors.push(
 					`agents.${agentName}.thinkingLevel must be one of: ${THINKING_LEVELS.join(", ")}`,
 				);
+			}
+			if (agent.engine !== undefined && !isAgentEngine(agent.engine)) {
+				errors.push(`agents.${agentName}.engine must be one of: ${AGENT_ENGINES.join(", ")}`);
 			}
 		}
 	}
