@@ -117,6 +117,8 @@ export class ClaudeSession {
 	private mirror: MirrorState = { lastMessageId: null };
 	private lastUsageTokens: number | null = null;
 	private contextWindow = DEFAULT_CONTEXT_WINDOW;
+	/** Tail of the Claude Code subprocess stderr, for error reporting. */
+	private stderrTail: string[] = [];
 	/** Settles when the in-flight prompt loop has fully stopped. */
 	private turnDone: Promise<void> = Promise.resolve();
 	private settleTurn: (() => void) | null = null;
@@ -193,6 +195,7 @@ export class ClaudeSession {
 		});
 
 		const textBlocks: string[] = [];
+		this.stderrTail = [];
 		this.abortController = new AbortController();
 		this.streaming = true;
 		this.turnDone = new Promise((resolve) => {
@@ -246,9 +249,14 @@ export class ClaudeSession {
 			if (isAbortError(error) || options.isCancelled?.()) {
 				return textBlocks.join("\n\n");
 			}
-			const disposition = classifyRuntimeError(error);
+			// Fold subprocess stderr into the error: it usually carries the real
+			// cause (auth, permission-mode refusal, …) and improves classification.
+			const stderrDetail = this.stderrTail.join("").trim();
+			const baseMessage = error instanceof Error ? error.message : String(error);
+			const errorMessage = stderrDetail ? `${baseMessage}\nstderr: ${stderrDetail}` : baseMessage;
+			console.error(`[claude-session] ${this.config.contextKey} failed: ${errorMessage}`);
+			const disposition = classifyRuntimeError(new Error(errorMessage));
 			if (disposition.kind === "user-facing-fallback") {
-				const errorMessage = error instanceof Error ? error.message : String(error);
 				throw new UserFacingError(errorMessage, disposition.userMessage);
 			}
 			throw error;
@@ -320,6 +328,10 @@ export class ClaudeSession {
 				: {}),
 			env: { ...process.env, ...this.config.toolEnv },
 			abortController: this.abortController ?? undefined,
+			stderr: (data) => {
+				this.stderrTail.push(data);
+				if (this.stderrTail.length > 20) this.stderrTail.shift();
+			},
 		};
 	}
 

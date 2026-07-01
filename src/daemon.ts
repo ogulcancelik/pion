@@ -216,7 +216,9 @@ class Daemon {
 				clearOnComplete: this.config.telegram.status?.clearOnComplete,
 			}).attach(this.runtimeEvents);
 
-			// Send startup notification if configured
+			// Send startup notification if configured. Best-effort: a bot whose
+			// chat was never opened gets "chat not found", which must not take
+			// the daemon down.
 			if (this.config.telegram.startupNotify) {
 				const startupText = this.recoveryInfo?.recovered
 					? buildStartupRecoveryMessage({
@@ -225,11 +227,18 @@ class Daemon {
 							lastHeartbeatAt: this.recoveryInfo.previousState?.lastHeartbeatAt,
 						})
 					: "🔮 Pion started.";
-				await telegram.send({
-					chatId: this.config.telegram.startupNotify,
-					text: startupText,
-				});
-				console.log("✓ Startup notification sent");
+				try {
+					await telegram.send({
+						chatId: this.config.telegram.startupNotify,
+						text: startupText,
+					});
+					console.log("✓ Startup notification sent");
+				} catch (error) {
+					console.warn(
+						"⚠ Startup notification failed:",
+						error instanceof Error ? error.message : error,
+					);
+				}
 			}
 		}
 
