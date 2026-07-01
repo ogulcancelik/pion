@@ -16,9 +16,13 @@ const DEFAULT_CONFIG_PATHS = [
 
 /**
  * Load config from a YAML file.
+ *
+ * Resolution order: explicit path argument, PION_CONFIG env var, then the
+ * default search paths. PION_CONFIG makes multi-instance deployments possible
+ * (e.g. a second daemon with its own bot token and data dir).
  */
 export function loadConfig(path?: string): Config {
-	const configPath = path ?? findConfigFile();
+	const configPath = path ?? process.env.PION_CONFIG ?? findConfigFile();
 
 	if (!configPath) {
 		throw new Error(`No config file found. Looked for: ${DEFAULT_CONFIG_PATHS.join(", ")}`);
